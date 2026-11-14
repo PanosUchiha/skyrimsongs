@@ -71,6 +71,13 @@ namespace music
 		return -1.0;
 	}
 
+	void Crowd::Lift(double a_by)
+	{
+		for (auto& p : m_people) {
+			p.mood = std::clamp(p.mood + a_by, 0.0, 1.0);
+		}
+	}
+
 	void Crowd::Sync(const std::vector<std::uint32_t>& a_present, const std::vector<std::uint32_t>* a_noTips)
 	{
 		std::erase_if(m_people, [&](const Person& p) { return std::find(a_present.begin(), a_present.end(), p.id) == a_present.end(); });

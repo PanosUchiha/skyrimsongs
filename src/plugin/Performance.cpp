@@ -139,6 +139,11 @@ namespace Performance
 		std::string        g_search;              // typed while the songbook is open
 		std::map<std::string, int> g_plays;       // song title -> times you've played it (saved)
 		std::set<std::string>      g_favourites;  // saved
+		// Signature songs: a song you've played well to a room in a town again and again becomes yours there, and the
+		// room cheers when it starts (saved: town -> song -> times it went down well there)
+		std::map<RE::FormID, std::map<std::string, int>> g_signature;
+		constexpr int                                    kSignatureAt = 4;
+		std::vector<RE::FormID>                          g_present;  // who was in earshot at the last look
 
 		// saved
 		std::map<RE::FormID, float> g_bans;  // cell -> the day you were thrown out
@@ -689,6 +694,8 @@ namespace Performance
 			spdlog::info("Play along: {} ({} notes, shifted {} semitones, speed {:.2f})", g_song.title, g_chart.Chart().size(), g_songShift, Config::Get().speed);
 		}
 
+		void CheerSignature();
+
 		void StartAuto(const music::Song& a_song)
 		{
 			BackToFree();
@@ -708,6 +715,7 @@ namespace Performance
 			g_act = Act::Auto;
 			EnsureAnim();
 			++g_plays[g_song.title];
+			CheerSignature();
 			Audio::PlaySong(notes, g_inst, Config::Get().speed, 1.0, true);
 			Say(fmt::format("You play {}.", g_song.title), kDim);
 			spdlog::info("Let it play: {} ({} notes)", g_song.title, notes.size());
@@ -1056,6 +1064,7 @@ namespace Performance
 				}
 			}
 			g_crowd.Sync(ids, &noTips);
+			g_present = ids;
 			MoveAudience(ids, g_keeper);
 			for (auto id : ids) {
 				if (auto* a = ActorOf(id); a && Seated(a)) {
@@ -1198,6 +1207,46 @@ namespace Performance
 			auto*       loc = p ? p->GetCurrentLocation() : nullptr;
 			const char* ln = loc ? loc->GetFullName() : nullptr;
 			return Lower(cn).find("bards college") != std::string::npos || Lower(ln).find("bards college") != std::string::npos;
+		}
+
+		// a town's own song of yours: the one played well there most, at least kSignatureAt times ("" if none yet)
+		std::string SignatureIn(RE::FormID a_town)
+		{
+			auto it = g_signature.find(a_town);
+			if (!a_town || it == g_signature.end()) {
+				return {};
+			}
+			const std::string* best = nullptr;
+			int                most = kSignatureAt - 1;
+			for (const auto& [title, n] : it->second) {
+				if (n > most) {
+					most = n;
+					best = &title;
+				}
+			}
+			return best ? *best : std::string{};
+		}
+
+		// a song the room knows as yours: cheers, and a warmer room
+		void CheerSignature()
+		{
+			if (!g_song.title.empty() && SignatureIn(g_town) == g_song.title && !g_present.empty()) {
+				// the room knows this one
+				g_crowd.Lift(0.12);
+				static const std::vector<std::string> kKnown = { "Ah, this one!", "That's the song!", "Here it comes!", "I know this one!",
+					"My favourite!", "Hah! Play it loud!", "This is the one I told you about." };
+				std::vector<RE::FormID> who = g_present;
+				std::shuffle(who.begin(), who.end(), g_rng);
+				std::vector<music::CrowdEvent> ev;
+				for (std::size_t i = 0; i < who.size() && i < 3; ++i) {
+					music::CrowdEvent e{ music::CrowdEvent::Kind::Cheer };
+					e.id = who[i];
+					e.line = PickOf(kKnown);
+					ev.push_back(e);
+				}
+				HandleCrowd(ev);
+				Say(fmt::format("{} knows this one as your song.", g_townName), kGoldCol);
+			}
 		}
 
 		// the room's temper: your settings, your name in this town, and how fine your instrument is
@@ -1523,6 +1572,15 @@ namespace Performance
 					g_quality = 0.92;
 					performing = performing && !Audio::SongPaused();  // a pause is a breath between, not a bad bit
 					if (Audio::SongTime() > g_song.length + 1.5) {
+						// played well to a room here: a step toward it becoming your song in this town
+						if (g_town && g_crowd.Size() > 0 && g_crowd.Mood() >= 0.5 && !g_song.title.empty()) {
+							const std::string before = SignatureIn(g_town);
+							++g_signature[g_town][g_song.title];
+							if (SignatureIn(g_town) == g_song.title && before != g_song.title) {
+								Hud(fmt::format("{} knows \"{}\" as your song now.", g_townName, g_song.title));
+								Say(fmt::format("{} knows \"{}\" as your song now.", g_townName, g_song.title), kGoldCol);
+							}
+						}
 						std::vector<music::CrowdEvent> ev;
 						g_crowd.SongEnded(0.9, Speech01(), ev);
 						HandleCrowd(ev);
@@ -1813,6 +1871,17 @@ namespace Performance
 			ImGui::PushFont(F.book);
 			ImGui::TextUnformatted(a_e.song.title.c_str());
 			ImGui::PopFont();
+			if (g_town && SignatureIn(g_town) == a_e.song.title) {
+				ImGui::SameLine();
+				ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.45f, 1.0f), " - your song in %s", g_townName.c_str());
+			} else if (g_town) {
+				if (auto t = g_signature.find(g_town); t != g_signature.end()) {
+					if (auto it = t->second.find(a_e.song.title); it != t->second.end() && it->second > 0 && ImGui::IsItemHovered()) {
+						ImGui::SetTooltip("Gone down well here %d time%s (%d makes it your song in %s)", it->second, it->second == 1 ? "" : "s", kSignatureAt,
+							g_townName.c_str());
+					}
+				}
+			}
 			ImGui::TableNextColumn();
 			if (!a_e.error.empty()) {
 				ImGui::TextDisabled("%s", a_e.error.c_str());
@@ -2434,6 +2503,19 @@ namespace Performance
 				writeStr(title);
 			}
 		}
+		if (a_intfc->OpenRecord('SIGN', kSaveVersion)) {
+			const auto towns = static_cast<std::uint32_t>(g_signature.size());
+			a_intfc->WriteRecordData(towns);
+			for (const auto& [town, songs] : g_signature) {
+				a_intfc->WriteRecordData(town);
+				const auto n5 = static_cast<std::uint32_t>(songs.size());
+				a_intfc->WriteRecordData(n5);
+				for (const auto& [title, count] : songs) {
+					writeStr(title);
+					a_intfc->WriteRecordData(count);
+				}
+			}
+		}
 		if (a_intfc->OpenRecord('RFIT', kSaveVersion)) {
 			a_intfc->WriteRecordData(g_refit[0]);
 			a_intfc->WriteRecordData(g_refit[1]);
@@ -2449,6 +2531,7 @@ namespace Performance
 		g_refit[0] = g_refit[1] = 0;
 		g_plays.clear();
 		g_favourites.clear();
+		g_signature.clear();
 		std::uint32_t type = 0, version = 0, length = 0;
 		while (a_intfc->GetNextRecordInfo(type, version, length)) {
 			if (version != kSaveVersion) {
@@ -2504,6 +2587,38 @@ namespace Performance
 						g_fame[resolved] = f;
 					}
 				}
+			} else if (type == 'SIGN') {
+				auto readStr = [&](std::string& a_s) {
+					std::uint32_t len = 0;
+					a_intfc->ReadRecordData(len);
+					if (len > 4096) {
+						return false;
+					}
+					a_s.resize(len);
+					return len == 0 || a_intfc->ReadRecordData(a_s.data(), len) == len;
+				};
+				std::uint32_t towns = 0;
+				a_intfc->ReadRecordData(towns);
+				bool ok = true;
+				for (std::uint32_t t = 0; ok && t < towns && t < 10000; ++t) {
+					RE::FormID    town = 0, resolved = 0;
+					std::uint32_t n = 0;
+					a_intfc->ReadRecordData(town);
+					a_intfc->ReadRecordData(n);
+					const bool known = a_intfc->ResolveFormID(town, resolved);
+					for (std::uint32_t i = 0; i < n && i < 100000; ++i) {
+						std::string title;
+						int         count = 0;
+						if (!readStr(title)) {
+							ok = false;
+							break;
+						}
+						a_intfc->ReadRecordData(count);
+						if (known) {
+							g_signature[resolved][title] = count;
+						}
+					}
+				}
 			} else if (type == 'PLAY' || type == 'FAVS') {
 				auto readStr = [&](std::string& a_s) {
 					std::uint32_t len = 0;
@@ -2551,5 +2666,6 @@ namespace Performance
 		g_refit[0] = g_refit[1] = 0;
 		g_plays.clear();
 		g_favourites.clear();
+		g_signature.clear();
 	}
 }
