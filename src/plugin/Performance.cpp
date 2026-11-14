@@ -100,6 +100,7 @@ namespace Performance
 		};
 		std::mutex           g_midiMtx;
 		std::vector<MidiHit> g_midiQ;
+		double                          g_hudToggled = -10.0;  // when Backspace last hid or showed the interface
 		std::unordered_map<int, double> g_lit;  // pitch -> when it last sounded
 
 		music::FreeJudge  g_free;
@@ -1473,7 +1474,7 @@ namespace Performance
 			// the keys' help
 			const std::string octave = g_octave == 0 ? "" : fmt::format("   (octave {:+d})", g_octave);
 			Text(dl, F.sm, { p0.x + W * 0.5f, y + 2.0f * s }, kDim,
-				fmt::format("Z-M  A-J  Q-I play  ·  Shift = black keys (S+Z = C#)  ·  Up/Down octave  ·  Tab songbook  ·  Esc {}{}", g_act == Act::Free ? "put away" : "stop the song",
+				fmt::format("Z-M  A-J  Q-I play  ·  Shift = black keys (S+Z = C#)  ·  Up/Down octave  ·  Tab songbook  ·  Backspace hide  ·  Esc {}{}", g_act == Act::Free ? "put away" : "stop the song",
 					octave),
 				0.5f);
 
@@ -1620,6 +1621,10 @@ namespace Performance
 			ImGui::SetNextItemWidth(220.0f * s);
 			if (ImGui::SliderFloat("Volume", &cfg.volume, 0.0f, 2.0f, "%.2f")) {
 				Audio::SetVolume(cfg.volume);
+			}
+			ImGui::SameLine(0.0f, 30.0f * s);
+			if (ImGui::Checkbox("Hide the interface (Backspace)", &cfg.hideHud)) {
+				Config::Save();
 			}
 			if (g_midiCount > 0) {
 				std::string names;
@@ -1788,6 +1793,14 @@ namespace Performance
 				Stop("Esc");
 			}
 			break;
+		case 0x0E:  // Backspace: hide or show everything on screen
+			{
+				auto& cfg = Config::Edit();
+				cfg.hideHud = !cfg.hideHud;
+				g_hudToggled = Now();
+				Config::Save();
+			}
+			break;
 		case 0x0F:  // Tab: the songbook
 			ReleaseAllKeys();
 			LoadSongs();
@@ -1885,7 +1898,15 @@ namespace Performance
 		if (!g_playing) {
 			return;
 		}
-		DrawHud();
+		if (!Config::Get().hideHud) {
+			DrawHud();
+		} else if (const double age = Now() - g_hudToggled; age < 3.0 && Overlay::GetMode() == Overlay::Mode::Playing) {
+			// a moment's word that it's hidden, then nothing
+			float sw = 0.0f, sh = 0.0f;
+			Overlay::ScreenSize(sw, sh);
+			const float a = static_cast<float>(age < 2.0 ? 1.0 : 3.0 - age);
+			Text(ImGui::GetBackgroundDrawList(), F.sm, { sw * 0.5f, sh - 40.0f * g_ui }, Fade(kDim, a), "Interface hidden  ·  Backspace to show it", 0.5f);
+		}
 		if (Overlay::GetMode() == Overlay::Mode::Book) {
 			DrawBook();
 		}

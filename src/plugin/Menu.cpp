@@ -46,7 +46,7 @@ namespace Menu
 		// the keys you play with can't also be the hotkey
 		bool UsedWhilePlaying(int a_scan)
 		{
-			static constexpr int kTaken[] = { 0x01, 0x0F, 0x2A, 0x36, 0xC8, 0xD0, 0x17 };
+			static constexpr int kTaken[] = { 0x01, 0x0E, 0x0F, 0x2A, 0x36, 0xC8, 0xD0, 0x17 };
 			if (std::find(std::begin(kTaken), std::end(kTaken), a_scan) != std::end(kTaken)) {
 				return true;
 			}
@@ -165,6 +165,8 @@ namespace Menu
 			Hint("How fast songs play: 100% is as written.");
 			UI::SeparatorText("Screen");
 			Changed(UI::Checkbox("Show the key guide", &v.showKeyboard));
+			Changed(UI::Checkbox("Hide the interface while playing", &v.hideHud));
+			Hint("Nothing on screen while you play, for immersion. Backspace while playing toggles it.");
 			Changed(UI::SliderFloat("Interface size", &v.uiScale, 0.6f, 1.6f, "%.2f"));
 			SaveRow();
 		}
