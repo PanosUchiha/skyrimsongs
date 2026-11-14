@@ -577,7 +577,7 @@ namespace Performance
 			spdlog::info("  {} notes, {} doubled ones dropped after folding into the {}'s range", before, before - notes.size(), InstName(g_inst));
 			g_song.all = notes;
 			g_act = Act::Auto;
-			Audio::PlaySong(notes, g_inst, 1.0f, 1.0, true);
+			Audio::PlaySong(notes, g_inst, Config::Get().speed, 1.0, true);
 			Say(fmt::format("You play {}.", g_song.title), kDim);
 			spdlog::info("Let it play: {} ({} notes)", g_song.title, notes.size());
 		}
@@ -1558,6 +1558,16 @@ namespace Performance
 
 			// settings and leaving
 			auto& cfg = Config::Edit();
+			ImGui::SetNextItemWidth(220.0f * s);
+			float speed = cfg.speed * 100.0f;
+			if (ImGui::SliderFloat("Song speed", &speed, 50.0f, 200.0f, "%.0f%%")) {
+				cfg.speed = std::round(speed / 5.0f) * 5.0f / 100.0f;  // in steps of 5%
+				Audio::SetSongSpeed(cfg.speed);
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("How fast songs play (100%% = as written). Changes a song that's playing, too.");
+			}
+			ImGui::SameLine(0.0f, 30.0f * s);
 			ImGui::SetNextItemWidth(220.0f * s);
 			if (ImGui::SliderFloat("Volume", &cfg.volume, 0.0f, 2.0f, "%.2f")) {
 				Audio::SetVolume(cfg.volume);

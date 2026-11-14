@@ -204,6 +204,22 @@ namespace Audio
 		g_song = std::move(p);
 	}
 
+	void SetSongSpeed(float a_speed)
+	{
+		std::lock_guard lk(g_songMtx);
+		auto&           s = g_song;
+		const float     speed = std::clamp(a_speed, 0.25f, 2.0f);
+		if (!s.active || speed == s.speed) {
+			s.speed = speed;
+			return;
+		}
+		// keep the song where it is now (at the render position), only faster or slower from here
+		const double rendered = static_cast<double>(g_rendered.load());
+		const double t = (rendered - static_cast<double>(s.startSample)) / kRate * s.speed;  // song seconds since the start (lead-in included)
+		s.speed = speed;
+		s.startSample = static_cast<std::uint64_t>((std::max)(0.0, rendered - t / speed * kRate));
+	}
+
 	void StopSong()
 	{
 		{

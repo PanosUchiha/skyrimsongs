@@ -25,7 +25,8 @@ Status: **first version, not yet tried in game.**
   the sustain pedal and all-notes-off. Its notes sound straight from the driver's thread, not on the next frame.
 - **The songbook** (**Tab**, **Esc** to close): switch instrument, go back to free play, or pick a song: every `.mid` in
   `Data\SKSE\Plugins\SkyrimSongs\Songs` and nothing else (a Greensleeves arrangement ships there).
-  - **Play:** the whole song plays itself on your instrument, perfectly, with no input (the note keys rest until
+  - **Play:** the whole song plays itself on your instrument, perfectly, with no input, at the **Song speed** set
+    in the songbook (50-200%, also changes a song already playing) (the note keys rest until
     it ends or Esc stops it); the crowd hears a great bard. Otherwise it's free play.
 
 ## The crowd

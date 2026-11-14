@@ -100,7 +100,7 @@ namespace Config
 		v.volume = std::clamp(Float("Play", "Volume", v.volume), 0.0f, 2.0f);
 		v.reverb = std::clamp(Float("Play", "Reverb", v.reverb), 0.0f, 1.0f);
 		v.latencyMs = std::clamp(Int("Play", "LatencyMs", v.latencyMs), -300, 300);
-		v.speed = std::clamp(Float("Play", "Speed", v.speed), 0.5f, 1.0f);
+		v.speed = std::clamp(Float("Play", "Speed", v.speed), 0.5f, 2.0f);
 		v.uiScale = std::clamp(Float("Play", "UiScale", v.uiScale), 0.5f, 2.0f);
 		v.showKeyboard = Bool("Play", "ShowKeyboard", v.showKeyboard);
 		v.listenRange = std::clamp(Float("Crowd", "ListenRange", v.listenRange), 200.0f, 6000.0f);

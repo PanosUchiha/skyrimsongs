@@ -16,7 +16,7 @@ namespace Config
 		float volume = 0.9f;
 		float reverb = 0.16f;
 		int   latencyMs = 0;              // play along: added to your timing if notes register late on your setup
-		float speed = 1.0f;               // play along: song speed (0.5 - 1.0)
+		float speed = 1.0f;               // songs: how fast they play (0.5 - 2.0; 1 = as written)
 		float uiScale = 1.0f;
 		bool  showKeyboard = true;        // the key guide at the bottom of the screen
 

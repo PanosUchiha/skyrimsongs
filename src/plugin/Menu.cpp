@@ -155,6 +155,14 @@ namespace Menu
 				Audio::SetReverb(v.reverb);
 				g_dirty = true;
 			}
+			UI::SeparatorText("Songs");
+			float speed = v.speed * 100.0f;
+			if (UI::SliderFloat("Song speed", &speed, 50.0f, 200.0f, "%.0f%%")) {
+				v.speed = std::round(speed / 5.0f) * 5.0f / 100.0f;
+				Audio::SetSongSpeed(v.speed);
+				g_dirty = true;
+			}
+			Hint("How fast songs play: 100% is as written.");
 			UI::SeparatorText("Screen");
 			Changed(UI::Checkbox("Show the key guide", &v.showKeyboard));
 			Changed(UI::SliderFloat("Interface size", &v.uiScale, 0.6f, 1.6f, "%.2f"));

@@ -17,6 +17,7 @@ namespace Audio
 
 	// a_leadIn: seconds before the song's first beat (the count-in); a_audible false: clock only
 	void   PlaySong(const std::vector<music::Note>& a_notes, music::Instrument a_inst, float a_speed, double a_leadIn, bool a_audible);
+	void   SetSongSpeed(float a_speed);  // change it mid-song: carries on from where it is
 	void   StopSong();
 	bool   SongActive();
 	double SongTime();  // song seconds at what you're hearing now (negative in the count-in); 0 with no song
