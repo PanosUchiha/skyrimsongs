@@ -46,7 +46,7 @@ namespace Menu
 		// the keys you play with can't also be the hotkey
 		bool UsedWhilePlaying(int a_scan)
 		{
-			static constexpr int kTaken[] = { 0x01, 0x0E, 0x0F, 0x2A, 0x36, 0xC8, 0xD0, 0x17 };
+			static constexpr int kTaken[] = { 0x01, 0x0E, 0x0F, 0x19, 0x2A, 0x36, 0xC8, 0xD0, 0x17 };
 			if (std::find(std::begin(kTaken), std::end(kTaken), a_scan) != std::end(kTaken)) {
 				return true;
 			}

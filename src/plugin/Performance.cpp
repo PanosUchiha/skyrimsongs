@@ -136,6 +136,9 @@ namespace Performance
 			std::filesystem::file_time_type mtime{};
 		};
 		std::vector<Entry> g_files;
+		std::string        g_search;              // typed while the songbook is open
+		std::map<std::string, int> g_plays;       // song title -> times you've played it (saved)
+		std::set<std::string>      g_favourites;  // saved
 
 		// saved
 		std::map<RE::FormID, float> g_bans;  // cell -> the day you were thrown out
@@ -636,6 +639,30 @@ namespace Performance
 			g_files = std::move(found);
 		}
 
+		// what a key types, on this keyboard's layout (for the songbook's search)
+		char CharOf(int a_scan, bool a_shift)
+		{
+			const UINT vk = ::MapVirtualKeyA(static_cast<UINT>(a_scan), MAPVK_VSC_TO_VK);
+			if (!vk) {
+				return 0;
+			}
+			BYTE ks[256]{};
+			if (a_shift) {
+				ks[VK_SHIFT] = 0x80;
+			}
+			WCHAR buf[4]{};
+			const int n = ::ToUnicode(vk, static_cast<UINT>(a_scan), ks, buf, 4, 0x4);  // 0x4: leave the keyboard's state alone
+			return n == 1 && buf[0] >= 32 && buf[0] < 127 ? static_cast<char>(buf[0]) : 0;
+		}
+
+		bool Matches(const std::string& a_title)
+		{
+			if (g_search.empty()) {
+				return true;
+			}
+			return Lower(a_title.c_str()).find(Lower(g_search.c_str())) != std::string::npos;
+		}
+
 		void BackToFree()
 		{
 			Audio::StopSong();
@@ -680,6 +707,7 @@ namespace Performance
 			g_song.all = notes;
 			g_act = Act::Auto;
 			EnsureAnim();
+			++g_plays[g_song.title];
 			Audio::PlaySong(notes, g_inst, Config::Get().speed, 1.0, true);
 			Say(fmt::format("You play {}.", g_song.title), kDim);
 			spdlog::info("Let it play: {} ({} notes)", g_song.title, notes.size());
@@ -1427,7 +1455,7 @@ namespace Performance
 			if (g_idleAt > 0.0 && now >= g_idleAt) {
 				RunIdle();
 			}
-			if (g_act == Act::Auto) {
+			if (g_act == Act::Auto && !Audio::SongPaused()) {
 				g_lastNoteAt = now;
 			} else if (g_animOn && now - g_lastNoteAt > 8.0) {
 				// a while of quiet: the instrument goes down (the next note brings it up again)
@@ -1493,6 +1521,7 @@ namespace Performance
 			case Act::Auto:
 				{
 					g_quality = 0.92;
+					performing = performing && !Audio::SongPaused();  // a pause is a breath between, not a bad bit
 					if (Audio::SongTime() > g_song.length + 1.5) {
 						std::vector<music::CrowdEvent> ev;
 						g_crowd.SongEnded(0.9, Speech01(), ev);
@@ -1589,7 +1618,8 @@ namespace Performance
 
 			// the header: instrument and what you're doing, the room, your earnings
 			float y = p0.y + 8.0f * s;
-			std::string what = g_act == Act::Free ? "Free play" : g_act == Act::Along ? "Playing along: " + g_song.title : "Playing: " + g_song.title;
+			std::string what = g_act == Act::Free ? "Free play" : g_act == Act::Along ? "Playing along: " + g_song.title :
+			                   (Audio::SongPaused() ? "Paused: " : "Playing: ") + g_song.title;
 			{
 				std::string inst = fmt::format("{}{}", TierWord(g_tierNow[g_inst == Instrument::Lute ? 0 : 1]), InstName(g_inst));
 				inst[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(inst[0])));
@@ -1727,8 +1757,10 @@ namespace Performance
 			// the keys' help
 			const std::string octave = g_octave == 0 ? "" : fmt::format("   (octave {:+d})", g_octave);
 			Text(dl, F.sm, { p0.x + W * 0.5f, y + 2.0f * s }, kDim,
-				fmt::format("Z-M  A-J  Q-I play  ·  Shift = black keys (S+Z = C#)  ·  Up/Down octave  ·  Tab songbook  ·  Backspace hide  ·  Esc {}{}", g_act == Act::Free ? "put away" : "stop the song",
-					octave),
+				g_act == Act::Auto ?
+					fmt::format("P {}  ·  Tab songbook  ·  Backspace hide  ·  Esc stop the song", Audio::SongPaused() ? "carry on" : "pause") :
+					fmt::format("Z-M  A-J  Q-I play  ·  Shift = black keys (S+Z = C#)  ·  Up/Down octave  ·  Tab songbook  ·  Backspace hide  ·  Esc {}{}",
+						g_act == Act::Free ? "put away" : "stop the song", octave),
 				0.5f);
 
 			// what the room says
@@ -1750,12 +1782,41 @@ namespace Performance
 			ImGui::PushID(a_id);
 			ImGui::TableNextRow();
 			ImGui::TableNextColumn();
+			{
+				// a favourite: a star to click
+				const bool   fav = g_favourites.contains(a_e.song.title);
+				const float  r = 8.0f * s;
+				const ImVec2 at = ImGui::GetCursorScreenPos() + ImVec2(r + 2.0f * s, r + 4.0f * s);
+				if (ImGui::InvisibleButton("##fav", ImVec2(2.0f * r + 4.0f * s, 2.0f * r + 8.0f * s))) {
+					if (fav) {
+						g_favourites.erase(a_e.song.title);
+					} else {
+						g_favourites.insert(a_e.song.title);
+					}
+				}
+				const bool hov = ImGui::IsItemHovered();
+				ImVec2     pts[10];
+				for (int i = 0; i < 10; ++i) {
+					const float a = -1.5707963f + i * 0.6283185f, rr = i % 2 ? r * 0.45f : r;
+					pts[i] = at + ImVec2(std::cos(a) * rr, std::sin(a) * rr);
+				}
+				auto* dl = ImGui::GetWindowDrawList();
+				if (fav) {
+					dl->AddConcavePolyFilled(pts, 10, kGoldCol);
+				}
+				dl->AddPolyline(pts, 10, fav ? kGoldCol : (hov ? IM_COL32(230, 200, 140, 220) : IM_COL32(160, 140, 110, 150)), ImDrawFlags_Closed, 1.3f * s);
+				if (hov) {
+					ImGui::SetTooltip(fav ? "A favourite (click to unmark)" : "Mark as a favourite: favourites come first");
+				}
+			}
+			ImGui::TableNextColumn();
 			ImGui::PushFont(F.book);
 			ImGui::TextUnformatted(a_e.song.title.c_str());
 			ImGui::PopFont();
 			ImGui::TableNextColumn();
 			if (!a_e.error.empty()) {
 				ImGui::TextDisabled("%s", a_e.error.c_str());
+				ImGui::TableNextColumn();
 				ImGui::TableNextColumn();
 				ImGui::TableNextColumn();
 				ImGui::PopID();
@@ -1772,6 +1833,12 @@ namespace Performance
 				ImGui::TextDisabled("%s", stars.c_str());
 			} else {
 				ImGui::TextDisabled("%zu", a_e.song.all.size());
+			}
+			ImGui::TableNextColumn();
+			if (auto it = g_plays.find(a_e.song.title); it != g_plays.end() && it->second > 0) {
+				ImGui::TextDisabled("%d", it->second);
+			} else {
+				ImGui::TextDisabled("-");
 			}
 			ImGui::TableNextColumn();
 			if (ImGui::Button("Play", ImVec2(110.0f * s, 0))) {
@@ -1881,17 +1948,79 @@ namespace Performance
 
 			// the songs
 			const float footer = 120.0f * s;
+			// search (just type) and sort
+			{
+				auto&  cfg = Config::Edit();
+				const ImVec2 b0 = ImGui::GetCursorScreenPos();
+				const float  bw = 320.0f * s, bh = ImGui::GetFrameHeight();
+				auto*        dl = ImGui::GetWindowDrawList();
+				dl->AddRectFilled(b0, b0 + ImVec2(bw, bh), IM_COL32(0, 0, 0, 90), 4.0f * s);
+				dl->AddRect(b0, b0 + ImVec2(bw, bh), g_search.empty() ? IM_COL32(200, 160, 90, 80) : kGoldCol, 4.0f * s, 0, 1.2f * s);
+				const bool blink = std::fmod(Now(), 1.0) < 0.55;
+				const std::string shown = g_search.empty() ? std::string("Type to search...") : g_search + (blink ? "|" : "");
+				dl->AddText(F.body, F.body->FontSize, b0 + ImVec2(8.0f * s, (bh - F.body->FontSize) * 0.5f), g_search.empty() ? IM_COL32(160, 145, 120, 160) : kInk,
+					shown.c_str());
+				ImGui::Dummy(ImVec2(bw, bh));
+				if (!g_search.empty()) {
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Clear")) {
+						g_search.clear();
+					}
+				}
+				ImGui::SameLine(0.0f, 30.0f * s);
+				static const char* kSorts[] = { "Name", "Length", "Notes", "Most played", "Newest" };
+				ImGui::SetNextItemWidth(170.0f * s);
+				int sort = std::clamp(cfg.songSort, 0, 4);
+				if (ImGui::Combo("Sort by", &sort, kSorts, 5)) {
+					cfg.songSort = sort;
+					Config::Save();
+				}
+			}
+			std::vector<const Entry*> list;
+			for (const auto& e : g_files) {
+				if (Matches(e.song.title)) {
+					list.push_back(&e);
+				}
+			}
+			{
+				const int sort = Config::Get().songSort;
+				auto      plays = [](const Entry* a_e) { auto it = g_plays.find(a_e->song.title); return it == g_plays.end() ? 0 : it->second; };
+				std::stable_sort(list.begin(), list.end(), [&](const Entry* a, const Entry* b) {
+					const bool fa = g_favourites.contains(a->song.title), fb = g_favourites.contains(b->song.title);
+					if (fa != fb) {
+						return fa;  // favourites first
+					}
+					switch (sort) {
+					case 1:
+						return a->song.length < b->song.length;
+					case 2:
+						return a->song.all.size() < b->song.all.size();
+					case 3:
+						return plays(a) > plays(b);
+					case 4:
+						return a->mtime > b->mtime;
+					default:
+						return _stricmp(a->song.title.c_str(), b->song.title.c_str()) < 0;
+					}
+				});
+			}
 			ImGui::BeginChild("##songs", ImVec2(0, -footer), true);
-			if (ImGui::BeginTable("##list", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+			if (ImGui::BeginTable("##list", 6, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+				ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 26.0f * s);
 				ImGui::TableSetupColumn("Song", ImGuiTableColumnFlags_WidthStretch, 3.0f);
-				ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-				ImGui::TableSetupColumn("Notes", ImGuiTableColumnFlags_WidthStretch, 0.9f);
+				ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_WidthStretch, 0.7f);
+				ImGui::TableSetupColumn("Notes", ImGuiTableColumnFlags_WidthStretch, 0.7f);
+				ImGui::TableSetupColumn("Played", ImGuiTableColumnFlags_WidthStretch, 0.6f);
 				ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 125.0f * s);
 				int id = 0;
-				for (const auto& e : g_files) {
-					SongRow(e, id++);
+				for (const auto* e : list) {
+					SongRow(*e, id++);
 				}
 				ImGui::EndTable();
+			}
+			if (!g_files.empty() && list.empty()) {
+				ImGui::Spacing();
+				ImGui::TextDisabled("No song matches \"%s\".", g_search.c_str());
 			}
 			if (g_files.empty()) {
 				ImGui::Spacing();
@@ -1941,6 +2070,16 @@ namespace Performance
 			ImGui::Spacing();
 			if (ImGui::Button("Back to playing", ImVec2(160.0f * s, 0))) {
 				Overlay::SetMode(Overlay::Mode::Playing);
+			}
+			if (g_act == Act::Auto) {
+				ImGui::SameLine();
+				const bool paused = Audio::SongPaused();
+				if (ImGui::Button(paused ? "Carry on (P)" : "Pause (P)", ImVec2(140.0f * s, 0))) {
+					Audio::PauseSong(!paused);
+					if (paused) {
+						EnsureAnim();
+					}
+				}
 			}
 			ImGui::SameLine();
 			if (ImGui::Button(fmt::format("Put the {} away", InstName(g_inst)).c_str(), ImVec2(180.0f * s, 0))) {
@@ -2058,9 +2197,27 @@ namespace Performance
 		}
 		const auto mode = Overlay::GetMode();
 		if (mode == Overlay::Mode::Book) {
-			if (a_down && (a_scan == 0x01 || a_scan == Config::Get().hotkey)) {  // Esc or the hotkey closes the songbook
-				Overlay::SetMode(Overlay::Mode::Playing);
+			if (!a_down) {
+				return;
 			}
+			if (a_scan == 0x01 || a_scan == Config::Get().hotkey) {  // Esc or the hotkey closes the songbook
+				Overlay::SetMode(Overlay::Mode::Playing);
+			} else if (a_scan == 0x0E) {  // Backspace: the search
+				if (!g_search.empty()) {
+					g_search.pop_back();
+				}
+			} else if (const char c = CharOf(a_scan, g_shiftL || g_shiftR); c && g_search.size() < 40) {
+				g_search += c;
+			}
+			return;
+		}
+		if (a_down && a_scan == 0x19 && g_act == Act::Auto) {  // P: pause the song, or carry on
+			const bool pause = !Audio::SongPaused();
+			Audio::PauseSong(pause);
+			if (!pause) {
+				EnsureAnim();
+			}
+			Say(pause ? "You pause." : "You carry on.", kDim);
 			return;
 		}
 		// a note key (while a song plays itself, the note keys rest)
@@ -2257,6 +2414,26 @@ namespace Performance
 				a_intfc->WriteRecordData(f.day);
 			}
 		}
+		auto writeStr = [&](const std::string& a_s) {
+			const auto len = static_cast<std::uint32_t>(a_s.size());
+			a_intfc->WriteRecordData(len);
+			a_intfc->WriteRecordData(a_s.data(), len);
+		};
+		if (a_intfc->OpenRecord('PLAY', kSaveVersion)) {
+			const auto n3 = static_cast<std::uint32_t>(g_plays.size());
+			a_intfc->WriteRecordData(n3);
+			for (const auto& [title, count] : g_plays) {
+				writeStr(title);
+				a_intfc->WriteRecordData(count);
+			}
+		}
+		if (a_intfc->OpenRecord('FAVS', kSaveVersion)) {
+			const auto n4 = static_cast<std::uint32_t>(g_favourites.size());
+			a_intfc->WriteRecordData(n4);
+			for (const auto& title : g_favourites) {
+				writeStr(title);
+			}
+		}
 		if (a_intfc->OpenRecord('RFIT', kSaveVersion)) {
 			a_intfc->WriteRecordData(g_refit[0]);
 			a_intfc->WriteRecordData(g_refit[1]);
@@ -2270,6 +2447,8 @@ namespace Performance
 		g_tipped.clear();
 		g_fame.clear();
 		g_refit[0] = g_refit[1] = 0;
+		g_plays.clear();
+		g_favourites.clear();
 		std::uint32_t type = 0, version = 0, length = 0;
 		while (a_intfc->GetNextRecordInfo(type, version, length)) {
 			if (version != kSaveVersion) {
@@ -2325,6 +2504,31 @@ namespace Performance
 						g_fame[resolved] = f;
 					}
 				}
+			} else if (type == 'PLAY' || type == 'FAVS') {
+				auto readStr = [&](std::string& a_s) {
+					std::uint32_t len = 0;
+					a_intfc->ReadRecordData(len);
+					if (len > 4096) {
+						return false;
+					}
+					a_s.resize(len);
+					return len == 0 || a_intfc->ReadRecordData(a_s.data(), len) == len;
+				};
+				std::uint32_t n = 0;
+				a_intfc->ReadRecordData(n);
+				for (std::uint32_t i = 0; i < n && i < 100000; ++i) {
+					std::string title;
+					if (!readStr(title)) {
+						break;
+					}
+					if (type == 'PLAY') {
+						int count = 0;
+						a_intfc->ReadRecordData(count);
+						g_plays[title] = count;
+					} else {
+						g_favourites.insert(title);
+					}
+				}
 			} else if (type == 'RFIT') {
 				a_intfc->ReadRecordData(g_refit[0]);
 				a_intfc->ReadRecordData(g_refit[1]);
@@ -2345,5 +2549,7 @@ namespace Performance
 		g_performances = 0;
 		g_fame.clear();
 		g_refit[0] = g_refit[1] = 0;
+		g_plays.clear();
+		g_favourites.clear();
 	}
 }

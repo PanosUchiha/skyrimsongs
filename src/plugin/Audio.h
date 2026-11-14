@@ -19,6 +19,8 @@ namespace Audio
 	void   PlaySong(const std::vector<music::Note>& a_notes, music::Instrument a_inst, float a_speed, double a_leadIn, bool a_audible);
 	void   SetSongSpeed(float a_speed);  // change it mid-song: carries on from where it is
 	void   StopSong();
+	void   PauseSong(bool a_pause);  // the song holds where it is (its notes let go) and carries on from there
+	bool   SongPaused();
 	bool   SongActive();
 	double SongTime();  // song seconds at what you're hearing now (negative in the count-in); 0 with no song
 	void   Click();     // a soft tick (the count-in)

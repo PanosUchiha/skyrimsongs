@@ -36,6 +36,8 @@ namespace Audio
 			float                  speed = 1.0f;
 			double                 leadIn = 0.0;
 			std::uint64_t          startSample = 0;  // the render position at song time -leadIn
+			bool                   paused = false;
+			double                 pausedAt = 0.0;  // paused: song seconds since the start (lead-in included)
 		};
 
 		IXAudio2*               g_xa = nullptr;
@@ -71,7 +73,7 @@ namespace Audio
 		{
 			std::lock_guard lk(g_songMtx);
 			auto&           s = g_song;
-			if (!s.active || !s.audible) {
+			if (!s.active || !s.audible || s.paused) {
 				return;
 			}
 			const double t = (static_cast<double>(a_blockStart + kBlock) - static_cast<double>(s.startSample)) / kRate * s.speed - s.leadIn;
@@ -209,7 +211,7 @@ namespace Audio
 		std::lock_guard lk(g_songMtx);
 		auto&           s = g_song;
 		const float     speed = std::clamp(a_speed, 0.25f, 2.0f);
-		if (!s.active || speed == s.speed) {
+		if (!s.active || speed == s.speed || s.paused) {
 			s.speed = speed;
 			return;
 		}
@@ -235,6 +237,37 @@ namespace Audio
 		}
 	}
 
+	void PauseSong(bool a_pause)
+	{
+		bool letGo = false;
+		{
+			std::lock_guard lk(g_songMtx);
+			auto&           s = g_song;
+			if (!s.active || s.paused == a_pause) {
+				return;
+			}
+			const double rendered = static_cast<double>(g_rendered.load());
+			if (a_pause) {
+				s.pausedAt = (std::max)(0.0, (rendered - static_cast<double>(s.startSample)) / kRate * s.speed);
+				s.paused = true;
+				letGo = s.audible;
+			} else {
+				// on from where it stopped: the notes due from here are the ones not yet played
+				s.startSample = static_cast<std::uint64_t>((std::max)(0.0, rendered - s.pausedAt / s.speed * kRate));
+				s.paused = false;
+			}
+		}
+		if (letGo && g_synth) {
+			g_synth->AllOff();
+		}
+	}
+
+	bool SongPaused()
+	{
+		std::lock_guard lk(g_songMtx);
+		return g_song.active && g_song.paused;
+	}
+
 	bool SongActive()
 	{
 		std::lock_guard lk(g_songMtx);
@@ -250,6 +283,9 @@ namespace Audio
 			std::lock_guard lk(g_songMtx);
 			if (!g_song.active) {
 				return 0.0;
+			}
+			if (g_song.paused) {
+				return g_song.pausedAt - g_song.leadIn;
 			}
 			start = g_song.startSample;
 			speed = g_song.speed;
