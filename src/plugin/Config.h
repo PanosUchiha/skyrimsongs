@@ -20,7 +20,6 @@ namespace Config
 		float uiScale = 1.0f;
 		bool  showKeyboard = true;        // the key guide at the bottom of the screen
 		int   songSort = 0;               // the songbook: 0 name, 1 length, 2 notes, 3 most played, 4 newest
-		bool  simplifySongs = false;      // songs cut down to the melody and a bass (a test)
 		bool  hideHud = false;            // play with nothing on screen (Backspace while playing toggles it)
 
 		// The crowd

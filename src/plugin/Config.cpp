@@ -78,7 +78,6 @@ namespace Config
 		put("Play", "UiScale", f(v.uiScale));
 		put("Play", "ShowKeyboard", b(v.showKeyboard));
 		put("Play", "HideHud", b(v.hideHud));
-		put("Play", "SimplifySongs", b(v.simplifySongs));
 		put("Play", "SongSort", std::to_string(v.songSort));
 		put("Crowd", "ListenRange", f(v.listenRange));
 		put("Crowd", "TipRate", f(v.tipRate));
@@ -107,7 +106,6 @@ namespace Config
 		v.uiScale = std::clamp(Float("Play", "UiScale", v.uiScale), 0.5f, 2.0f);
 		v.showKeyboard = Bool("Play", "ShowKeyboard", v.showKeyboard);
 		v.hideHud = Bool("Play", "HideHud", v.hideHud);
-		v.simplifySongs = Bool("Play", "SimplifySongs", v.simplifySongs);
 		v.songSort = std::clamp(Int("Play", "SongSort", v.songSort), 0, 4);
 		v.listenRange = std::clamp(Float("Crowd", "ListenRange", v.listenRange), 200.0f, 6000.0f);
 		v.tipRate = std::clamp(Float("Crowd", "TipRate", v.tipRate), 0.0f, 10.0f);

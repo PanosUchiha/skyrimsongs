@@ -704,14 +704,14 @@ namespace Performance
 
 		void CheerSignature();
 
-		void StartAuto(const music::Song& a_song)
+		void StartAuto(const music::Song& a_song, bool a_simple = false)
 		{
 			BackToFree();
 			g_song = a_song;
 			// the song as written, every note from C2 to A7 (like a sequencer's piano roll); anything beyond is
 			// moved by octaves into it
 			g_songShift = 0;
-			const bool        simple = Config::Get().simplifySongs;
+			const bool        simple = a_simple;
 			const auto        source = simple ? music::Simplify(g_song) : g_song.all;
 			const std::size_t before = source.size();
 			if (simple) {
@@ -725,7 +725,7 @@ namespace Performance
 			++g_plays[g_song.title];
 			CheerSignature();
 			Audio::PlaySong(notes, g_inst, Config::Get().speed, 1.0, true);
-			Say(fmt::format("You play {}.", g_song.title), kDim);
+			Say(fmt::format(simple ? "You play {}, simply." : "You play {}.", g_song.title), kDim);
 			spdlog::info("Let it play: {} ({} notes)", g_song.title, notes.size());
 		}
 
@@ -2127,12 +2127,22 @@ namespace Performance
 				ImGui::TextDisabled("-");
 			}
 			ImGui::TableNextColumn();
-			if (ImGui::Button("Play", ImVec2(110.0f * s, 0))) {
+			if (ImGui::Button("Play", ImVec2(90.0f * s, 0))) {
 				StartAuto(a_e.song);
 				Overlay::SetMode(Overlay::Mode::Playing);
 			}
 			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("The song plays itself on your instrument, perfectly.\nThe crowd won't know.");
+				ImGui::SetTooltip("The song plays itself on your instrument, every note of it, perfectly.\nThe crowd won't know.");
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Simple", ImVec2(90.0f * s, 0))) {
+				StartAuto(a_e.song, true);
+				Overlay::SetMode(Overlay::Mode::Playing);
+			}
+			if (ImGui::IsItemHovered()) {
+				const auto simple = music::Simplify(a_e.song).size();
+				ImGui::SetTooltip("Cut down to what one bard could play: the tune, and a bass note where the chords change\n(%zu of its %zu notes).",
+					simple, a_e.song.all.size());
 			}
 			ImGui::PopID();
 		}
@@ -2267,7 +2277,7 @@ namespace Performance
 			ImGui::Spacing();
 
 			// the songs
-			const float footer = 120.0f * s;
+			const float footer = 150.0f * s;
 			// search (just type) and sort
 			{
 				auto&  cfg = Config::Edit();
@@ -2331,7 +2341,7 @@ namespace Performance
 				ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_WidthStretch, 0.7f);
 				ImGui::TableSetupColumn("Notes", ImGuiTableColumnFlags_WidthStretch, 0.7f);
 				ImGui::TableSetupColumn("Played", ImGuiTableColumnFlags_WidthStretch, 0.6f);
-				ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 125.0f * s);
+				ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 196.0f * s);
 				int id = 0;
 				for (const auto* e : list) {
 					SongRow(*e, id++);
@@ -2366,18 +2376,10 @@ namespace Performance
 			if (ImGui::SliderFloat("Volume", &cfg.volume, 0.0f, 2.0f, "%.2f")) {
 				Audio::SetVolume(cfg.volume);
 			}
-			ImGui::SameLine(0.0f, 30.0f * s);
-			if (ImGui::Checkbox("Hide the interface (Backspace)", &cfg.hideHud)) {
+			if (ImGui::Checkbox("Hide the interface while playing (Backspace)", &cfg.hideHud)) {
 				Config::Save();
 			}
-			ImGui::SameLine(0.0f, 30.0f * s);
-			if (ImGui::Checkbox("Simplify songs", &cfg.simplifySongs)) {
-				Config::Save();
-			}
-			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Busy MIDI files cut down to what one bard could play: the melody, and a bass note where the harmony moves.\n"
-								  "Takes effect the next time you play a song.");
-			}
+
 			if (g_midiCount > 0) {
 				std::string names;
 				for (const auto& n : g_midiNames) {
