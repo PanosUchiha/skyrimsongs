@@ -59,6 +59,8 @@ namespace Performance
 		RE::TESIdleForm*               g_idles[2]{};
 		RE::TESIdleForm*               g_stopIdle = nullptr;
 		std::vector<RE::BGSSoundCategory*> g_musicCats;
+		std::set<RE::FormID>           g_lookers;            // seated listeners turned to watch you (head and eyes; a chair won't let them turn)
+		double                         g_nextBardHush = 0.0;  // when to ask the inn's bard to stop again
 		RE::BGSMusicType*              g_silence = nullptr;  // a music type of nothing but silence, pushed while you play
 		std::vector<RE::TESIdleForm*>  g_applaud, g_dance, g_enjoy;
 		RE::TESIdleForm*               g_give = nullptr;
@@ -613,6 +615,10 @@ namespace Performance
 		std::vector<RE::FormID>                  g_staleVisitors;  // saved mid-performance: sent home after the load
 
 		RE::Actor* ActorOf(RE::FormID a_id) { return RE::TESForm::LookupByID<RE::Actor>(a_id); }
+		bool       IsVisitor(RE::FormID a_id)
+		{
+			return std::any_of(g_visitors.begin(), g_visitors.end(), [&](const Visitor& v) { return v.id == a_id; });
+		}
 
 		std::string NameOfActor(RE::Actor* a_actor)
 		{
@@ -629,11 +635,24 @@ namespace Performance
 			return proc && proc->PlayIdle(a_actor, a_idle, nullptr);
 		}
 
+		bool Seated(RE::Actor* a_actor)
+		{
+			auto* st = a_actor ? a_actor->AsActorState() : nullptr;
+			return st && st->GetSitSleepState() != RE::SIT_SLEEP_STATE::kNormal;
+		}
+
 		// turn to you first: an idle plays the way the actor faces, and many were facing away
 		void FacePlayer(RE::Actor* a_actor)
 		{
 			auto* player = Player();
 			if (!a_actor || !player) {
+				return;
+			}
+			if (Seated(a_actor)) {
+				// a chair holds them where they sit: they turn their head and watch you instead
+				if (g_lookers.insert(a_actor->GetFormID()).second) {
+					Call(a_actor, "SetLookAt", static_cast<RE::TESObjectREFR*>(player), false);
+				}
 				return;
 			}
 			const auto at = a_actor->GetPosition(), me = player->GetPosition();
@@ -833,6 +852,28 @@ namespace Performance
 			return (base && base->npcClass && has(base->npcClass->GetFullName())) || has(a_actor->GetDisplayFullName());
 		}
 
+		// the inn's bard stops while you play: Skyrim's own "stop playing" (BardSongsScript.StopAllSongs), asked again
+		// now and then, as a bard will start up again by themselves after a while
+		void HushBards()
+		{
+			const double now = Now();
+			if (now < g_nextBardHush) {
+				return;
+			}
+			g_nextBardHush = now + 8.0;
+			static RE::TESQuest* quest = [] {
+				auto* q = RE::TESForm::LookupByEditorID<RE::TESQuest>("BardSongs");
+				if (!q) {
+					q = RE::TESForm::LookupByID<RE::TESQuest>(0x74A55);
+				}
+				spdlog::info("Bards: {}", q ? fmt::format("BardSongs quest {:08X}", q->GetFormID()) : std::string("BardSongs quest not found"));
+				return q;
+			}();
+			if (quest && quest->IsRunning()) {
+				Call(quest, "StopAllSongs");
+			}
+		}
+
 		void ScanListeners()
 		{
 			auto* pl = RE::ProcessLists::GetSingleton();
@@ -890,6 +931,28 @@ namespace Performance
 			}
 			g_crowd.Sync(ids, &noTips);
 			MoveAudience(ids, g_keeper);
+			for (auto id : ids) {
+				if (auto* a = ActorOf(id); a && Seated(a)) {
+					FacePlayer(a);
+				}
+			}
+			for (auto it = g_lookers.begin(); it != g_lookers.end();) {
+				auto* a = ActorOf(*it);
+				if (!a || std::find(ids.begin(), ids.end(), *it) == ids.end() || !Seated(a)) {
+					if (a && !Seated(a)) {
+						// stood up: let them be (a visitor's own look-at is set when they arrive)
+						if (!IsVisitor(*it)) {
+							Call(a, "ClearLookAt");
+						}
+					} else if (a) {
+						Call(a, "ClearLookAt");
+					}
+					it = g_lookers.erase(it);
+				} else {
+					++it;
+				}
+			}
+			HushBards();
 			bool innLoc = false;
 			if (auto* loc = player->GetCurrentLocation()) {
 				innLoc = loc->HasKeywordID(kLocTypeInn);
@@ -1087,6 +1150,11 @@ namespace Performance
 			g_playing = false;
 			g_midiLive = false;
 			SendAllAway();
+			for (auto id : g_lookers) {
+				Call(ActorOf(id), "ClearLookAt");
+			}
+			g_lookers.clear();
+			g_nextBardHush = 0.0;
 			ReleaseAllKeys();
 			Audio::StopSong();
 			MidiIn::Close();
