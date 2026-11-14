@@ -743,6 +743,21 @@ namespace Performance
 		}
 
 		// ------------------------------------------------------------------------------------------ the crowd
+		// a beggar: the Beggar class (Edda, Snilf, Brenuin...), or named as one
+		bool IsBeggar(RE::Actor* a_actor)
+		{
+			auto* base = a_actor ? a_actor->GetActorBase() : nullptr;
+			auto  has = [](const char* a_s) {
+				if (!a_s) {
+					return false;
+				}
+				std::string l = a_s;
+				std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				return l.find("beggar") != std::string::npos;
+			};
+			return (base && base->npcClass && has(base->npcClass->GetFullName())) || has(a_actor->GetDisplayFullName());
+		}
+
 		void ScanListeners()
 		{
 			auto* pl = RE::ProcessLists::GetSingleton();
@@ -754,7 +769,7 @@ namespace Performance
 			const bool interior = cell && cell->IsInteriorCell();
 			const auto here = player->GetPosition();
 			const float range = Config::Get().listenRange;
-			std::vector<std::uint32_t> ids;
+			std::vector<std::uint32_t> ids, beggars;
 			g_keeper = 0;
 			for (auto& h : pl->highActorHandles) {
 				auto ap = h.get();
@@ -785,10 +800,14 @@ namespace Performance
 				if (g_innkeepers && a->IsInFaction(g_innkeepers)) {
 					g_keeper = id;
 				}
+				// beggars listen, but have nothing to give
+				if (IsBeggar(a)) {
+					beggars.push_back(id);
+				}
 			}
 			// who already tipped you today
 			const float               today = RE::Calendar::GetSingleton() ? std::floor(RE::Calendar::GetSingleton()->GetDaysPassed()) : 0.0f;
-			std::vector<std::uint32_t> noTips;
+			std::vector<std::uint32_t> noTips = beggars;
 			for (auto id : ids) {
 				if (auto it = g_tipped.find(id); it != g_tipped.end() && std::floor(it->second) >= today) {
 					noTips.push_back(id);
