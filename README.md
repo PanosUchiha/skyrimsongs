@@ -11,7 +11,7 @@ Status: **first version, not yet tried in game.**
 
 - **Take it out:** carry a lute or a flute (the vanilla items, anything sharing their models such as Finn's Lute,
   Pantea's Flute or the Dancer's Flute, and any mod's item, misc, weapon or armour, with "lute" or "flute" in its
-  name or model file name) and press **O** (`Hotkey`). The player plays the game's own bard idle, which puts the
+  name or model file name) and press **O** (`Hotkey`; change it in game on the SKSE Menu Framework page: *Change...*, then press the key). The player plays the game's own bard idle, which puts the
   instrument in their hands (Skyrim.esm `0x96F8D` lute, `0x96F8C` flute, put away with `IdleStop_Loose`
   `0x10D9EE`, the same ones Skyrim's Got Talent uses); a torch or shield in the left hand is unequipped, the camera
   goes to third person, and a silent music type is pushed over the game's music. **Esc** puts it away (while you play, the hotkey and every other key are swallowed; Esc is

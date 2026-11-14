@@ -6,6 +6,8 @@
 #include "Audio.h"
 #include "Config.h"
 
+#include "../music/Keymap.h"
+
 #define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
 #include "SKSEMenuFramework.h"
 
@@ -16,6 +18,99 @@ namespace Menu
 		namespace UI = ImGuiMCP;
 
 		bool g_dirty = false;
+
+		// ---- the hotkey: "Press a key", read straight from Windows (so no other input hook can hide it)
+		bool             g_capturing = false;
+		std::array<bool, 256> g_wasDown{};
+
+		// a DirectInput scan code (what the game and the INI use) for a Windows virtual key; 0 if none
+		int ScanFor(int a_vk)
+		{
+			const UINT sc = ::MapVirtualKeyA(static_cast<UINT>(a_vk), 4 /* MAPVK_VK_TO_VSC_EX */);
+			if (!sc) {
+				return 0;
+			}
+			return (sc & 0xFF) | (((sc >> 8) == 0xE0 || (sc >> 8) == 0xE1) ? 0x80 : 0);
+		}
+
+		std::string KeyName(int a_scan)
+		{
+			char       buf[64]{};
+			const LONG lp = ((a_scan & 0x7F) << 16) | ((a_scan & 0x80) ? (1 << 24) : 0);
+			if (::GetKeyNameTextA(lp, buf, sizeof(buf)) > 0) {
+				return buf;
+			}
+			return fmt::format("0x{:02X}", a_scan);
+		}
+
+		// the keys you play with can't also be the hotkey
+		bool UsedWhilePlaying(int a_scan)
+		{
+			static constexpr int kTaken[] = { 0x01, 0x0F, 0x2A, 0x36, 0xC8, 0xD0, 0x17 };
+			if (std::find(std::begin(kTaken), std::end(kTaken), a_scan) != std::end(kTaken)) {
+				return true;
+			}
+			for (int r = 0; r < 3; ++r) {
+				for (int c = 0; c < 7; ++c) {
+					if (music::keymap::kRows[r][c] == a_scan) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
+		std::string g_captureNote;
+
+		void HotkeyRow()
+		{
+			auto& v = Config::Edit();
+			UI::Text("Hotkey: %s", KeyName(v.hotkey).c_str());
+			UI::SameLine();
+			if (!g_capturing) {
+				if (UI::Button("Change...")) {
+					g_capturing = true;
+					g_captureNote.clear();
+					for (int vk = 0; vk < 256; ++vk) {
+						g_wasDown[vk] = (::GetAsyncKeyState(vk) & 0x8000) != 0;  // what's already held doesn't count
+					}
+				}
+			} else {
+				UI::TextColored(UI::ImVec4{ 0.95f, 0.8f, 0.4f, 1.0f }, "Press a key... (Esc cancels)");
+				for (int vk = 8; vk < 256; ++vk) {
+					if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU) {
+						continue;  // the left/right versions are reported too
+					}
+					const bool down = (::GetAsyncKeyState(vk) & 0x8000) != 0;
+					const bool pressed = down && !g_wasDown[vk];
+					g_wasDown[vk] = down;
+					if (!pressed) {
+						continue;
+					}
+					if (vk == VK_ESCAPE) {
+						g_capturing = false;
+						break;
+					}
+					const int scan = ScanFor(vk);
+					if (!scan) {
+						continue;
+					}
+					if (UsedWhilePlaying(scan)) {
+						g_captureNote = KeyName(scan) + " is used while you play - pick another key.";
+						continue;
+					}
+					v.hotkey = scan;
+					g_capturing = false;
+					g_captureNote.clear();
+					Config::Save();  // straight to the INI
+					spdlog::info("Hotkey changed in game to {} (0x{:02X})", KeyName(scan), scan);
+					break;
+				}
+			}
+			if (!g_captureNote.empty()) {
+				UI::TextDisabled("%s", g_captureNote.c_str());
+			}
+		}
 
 		void Hint(const char* a_text)
 		{
@@ -47,7 +142,7 @@ namespace Menu
 		{
 			auto& v = Config::Edit();
 			UI::SeparatorText("Taking out your instrument");
-			UI::Text("Hotkey: scan code 0x%02X (change it in SkyrimSongs.ini, Hotkey =)", v.hotkey);
+			HotkeyRow();
 			Changed(UI::Checkbox("Need a lute or flute in your pack", &v.requireInstrument));
 			Changed(UI::Checkbox("Switch to third person while playing", &v.thirdPerson));
 			Changed(UI::Checkbox("Quiet the game's music while playing", &v.muteMusic));
