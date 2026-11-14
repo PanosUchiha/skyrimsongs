@@ -128,9 +128,9 @@ int main(int argc, char** argv)
 			std::printf("%s: %s\n", argv[a], err.c_str());
 			continue;
 		}
-		const auto notes = music::FoldIntoRange(song.all);
-		WriteWav(dir + "/song" + std::to_string(a - 1) + "_lute.wav", Play(music::Instrument::Lute, notes, 0, 2.0, false), 48000);
-		WriteWav(dir + "/song" + std::to_string(a - 1) + "_flute.wav", Play(music::Instrument::Flute, notes, 0, 2.0, false), 48000);
+		WriteWav(dir + "/song" + std::to_string(a - 1) + "_lute.wav", Play(music::Instrument::Lute, music::FoldIntoRange(song.all), 0, 2.0, false), 48000);
+		WriteWav(dir + "/song" + std::to_string(a - 1) + "_flute.wav", Play(music::Instrument::Flute, music::FoldIntoRange(song.all, 60), 0, 2.0, false),
+			48000);
 	}
 	std::printf("wrote preview_lute.wav, preview_flute.wav and preview_tip.wav to %s\n", dir.c_str());
 	return 0;

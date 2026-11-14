@@ -135,6 +135,7 @@ namespace music
 		Biquad m_body[3];
 		Biquad m_tone;  // a gentle low-pass on the lute
 		float  m_dcX = 0.0f, m_dcY = 0.0f;
+		float  m_fluteHpX = 0.0f, m_fluteHpY = 0.0f;  // a high-pass on the flute: no boom under it
 
 		// a small room (Freeverb, cut down)
 		struct Comb

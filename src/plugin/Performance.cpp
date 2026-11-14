@@ -561,8 +561,9 @@ namespace Performance
 			// moved by octaves into it
 			g_songShift = 0;
 			const std::size_t before = g_song.all.size();
-			auto notes = music::FoldIntoRange(g_song.all);
-			spdlog::info("  {} notes, {} doubled ones dropped after folding into C2-A7", before, before - notes.size());
+			// (the flute has no bass: anything below its lowest note, C4, goes up an octave or two)
+			auto notes = music::FoldIntoRange(g_song.all, g_inst == Instrument::Flute ? 60 : music::kSongLow);
+			spdlog::info("  {} notes, {} doubled ones dropped after folding into the {}'s range", before, before - notes.size(), InstName(g_inst));
 			g_song.all = notes;
 			g_act = Act::Auto;
 			Audio::PlaySong(notes, g_inst, 1.0f, 1.0, true);
@@ -1303,6 +1304,9 @@ namespace Performance
 					ReleaseAllKeys();
 					BackToFree();
 					SetInst(inst);
+					if (inst == Instrument::Flute && g_octave < 0) {
+						g_octave = 0;  // the flute starts at C4
+					}
 					g_lastInst = inst;
 					// put the old instrument away properly (the put-away animation is what takes it out of the hands;
 					// starting the new idle before it finished left both instruments held), then take out the new one
@@ -1517,8 +1521,8 @@ namespace Performance
 				++g_octave;
 			}
 			break;
-		case 0xD0:  // Down
-			if (g_octave > -2) {
+		case 0xD0:  // Down (the flute doesn't go below C4)
+			if (g_octave > (g_inst == Instrument::Flute ? 0 : -2)) {
 				ReleaseAllKeys();
 				--g_octave;
 			}

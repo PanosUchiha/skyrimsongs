@@ -20,7 +20,7 @@ namespace music
 		// loudness by key (dB at MIDI notes 24, 30, 36 ... 108), measured with tests/voicing so every note a song
 		// can play (C2-A7, the range of the songbook) comes out about as loud as the others
 		constexpr float kLuteNorm[] = { -5.6f, -5.6f, -5.5f, -5.2f, -5.5f, -1.9f, -1.4f, 0.3f, 1.6f, 1.9f, 3.5f, 6.7f, 9.1f, 10.2f, 17.2f };
-		constexpr float kFluteNorm[] = { 4.5f, 4.5f, 3.9f, 3.0f, 2.4f, 2.1f, 1.9f, 1.4f, 0.9f, 0.3f, -0.5f, -2.1f, -3.7f, -4.3f, -4.5f };
+		constexpr float kFluteNorm[] = { 2.7f, 2.7f, 2.7f, 2.7f, 2.7f, 2.7f, 2.7f, 1.8f, 1.0f, 0.2f, -0.7f, -2.3f, -4.0f, -4.6f, -4.8f };
 		float NormDb(const float* a_table, int a_pitch)
 		{
 			const float x = std::clamp((a_pitch - 24) / 6.0f, 0.0f, 13.999f);
@@ -496,7 +496,11 @@ namespace music
 				body += b.Run(dc);
 			}
 			body = m_tone.Run(body) * 3.2f;
-			const float dry = body + flute * 0.8f + coin;
+			// the flute through a gentle high-pass (~160 Hz): a flute has no bass, so nothing boomy gets through
+			const float fhp = 0.979f * (m_fluteHpY + flute - m_fluteHpX);
+			m_fluteHpX = flute;
+			m_fluteHpY = fhp;
+			const float dry = body + fhp * 0.8f + coin;
 			const float wet = Reverb(dry) * m_wet;
 			a_out[i] = std::tanh((dry + wet) * m_volume * 0.7f);
 		}

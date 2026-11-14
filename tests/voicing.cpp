@@ -48,7 +48,8 @@ int main(int argc, char** argv)
 	int        bad = 0;
 	for (int k = 0; k < 2; ++k) {
 		const auto inst = k == 0 ? music::Instrument::Lute : music::Instrument::Flute;
-		constexpr int kLow = 36, kHigh = 105, kN = kHigh - kLow + 1;
+		// the lute plays C2-A7; the flute's songs are kept to its own range, C4-A7
+		const int kLow = k == 0 ? 36 : 60, kHigh = 105, kN = kHigh - kLow + 1;
 		std::vector<double> db;
 		for (int i = 0; i < kN; ++i) {
 			db.push_back(Loudness(inst, kLow + i));
@@ -69,7 +70,7 @@ int main(int argc, char** argv)
 		// the correction: minus the deviation, smoothed over +-3 semitones, every 6 semitones
 		std::printf("  table:");
 		for (int t = 0; t < 15; ++t) {
-			const int at = 24 + t * 6 - kLow;  // relative to C2
+			const int at = 24 + t * 6 - kLow;  // relative to the lowest note
 			double    sum = 0.0;
 			int       n = 0;
 			for (int i = std::clamp(at - 3, 0, kN - 1); i <= std::clamp(at + 3, 0, kN - 1); ++i) {
