@@ -8,7 +8,7 @@ namespace Config
 	struct Values
 	{
 		// Playing
-		int   hotkey = 0x18;              // O: take out your instrument / put it away (DirectInput scan code)
+		int   hotkey = 0x2B;              // \: take out your instrument / put it away, close the songbook (DirectInput scan code)
 		bool  requireInstrument = true;   // you need a lute or flute in your pack
 		bool  thirdPerson = true;         // switch to third person while you play (and back after)
 		bool  muteMusic = true;           // quiet the game's music while you play
@@ -28,6 +28,8 @@ namespace Config
 		float patience = 1.0f;         // how quickly a bad set turns them
 		bool  throwOut = true;         // a hostile crowd in an inn gets you thrown out (and banned there for the day)
 		float speechXp = 0.5f;         // Speech experience per septim earned
+		bool  reactions = true;        // listeners clap, dance, drink, hand over their tip, scratch their heads
+		int   maxVisitors = 4;         // happy listeners who come over to stand in front of you (0-4)
 
 		// Animation: the idles' form IDs in Skyrim.esm (0: the game's bard idles, which put the instrument in your hands)
 		RE::FormID luteIdle = 0;

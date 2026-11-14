@@ -24,6 +24,7 @@ namespace music
 		std::uint32_t id = 0;  // the listener (an actor's form ID in game)
 		int           gold = 0;
 		std::string   line;
+		std::vector<std::uint32_t> payers;  // Applause: who put into the collection
 	};
 
 	class Crowd
@@ -34,14 +35,17 @@ namespace music
 			float tipRate = 1.0f;       // how often tips come
 			float tipSize = 1.0f;       // how big they are
 			int   maxPerListener = 40;  // gold one listener gives in one performance at most
+			bool  oneTipEach = false;   // each listener tips once (the plugin: once a day)
 			float patience = 1.0f;      // how quickly a bad set turns them
 		};
 
 		explicit Crowd(std::uint32_t a_seed = 1);
 		void SetSettings(const Settings& a_s) { m_set = a_s; }
 
-		// Who's listening now. Newcomers arrive curious; anyone gone is forgotten.
-		void Sync(const std::vector<std::uint32_t>& a_present);
+		// Who's listening now. Newcomers arrive curious; anyone gone is forgotten. a_noTips: listeners who won't
+		// tip (they already did today)
+		void Sync(const std::vector<std::uint32_t>& a_present, const std::vector<std::uint32_t>* a_noTips = nullptr);
+		double MoodOf(std::uint32_t a_id) const;  // -1 if not listening
 
 		// a_quality: 0..1 how well you're playing; a_skill: 0..1 (Speech), a_playing: false while you're between songs
 		void Step(double a_dt, double a_quality, double a_skill, bool a_playing, std::vector<CrowdEvent>& a_out);

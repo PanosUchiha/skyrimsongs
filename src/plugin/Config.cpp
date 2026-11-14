@@ -41,7 +41,7 @@ namespace Config
 				return a_def;
 			}
 			try {
-				return static_cast<int>(std::stol(s, nullptr, 0));  // 0x18 or 24
+				return static_cast<int>(std::stol(s, nullptr, 0));  // 0x2B or 43
 			} catch (...) {
 				return a_def;
 			}
@@ -84,6 +84,8 @@ namespace Config
 		put("Crowd", "Patience", f(v.patience));
 		put("Crowd", "ThrowOut", b(v.throwOut));
 		put("Crowd", "SpeechXP", f(v.speechXp));
+		put("Crowd", "Reactions", b(v.reactions));
+		put("Crowd", "MaxVisitors", std::to_string(v.maxVisitors));
 		spdlog::info("Settings saved");
 	}
 
@@ -108,6 +110,8 @@ namespace Config
 		v.patience = std::clamp(Float("Crowd", "Patience", v.patience), 0.1f, 5.0f);
 		v.throwOut = Bool("Crowd", "ThrowOut", v.throwOut);
 		v.speechXp = std::clamp(Float("Crowd", "SpeechXP", v.speechXp), 0.0f, 10.0f);
+		v.reactions = Bool("Crowd", "Reactions", v.reactions);
+		v.maxVisitors = std::clamp(Int("Crowd", "MaxVisitors", v.maxVisitors), 0, 4);
 		v.luteIdle = static_cast<RE::FormID>(Int("Animation", "LuteIdle", 0));
 		v.fluteIdle = static_cast<RE::FormID>(Int("Animation", "FluteIdle", 0));
 		v.stopIdle = static_cast<RE::FormID>(Int("Animation", "StopIdle", 0));

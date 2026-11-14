@@ -61,7 +61,17 @@ namespace music
 		return a_lines[std::uniform_int_distribution<std::size_t>(0, a_lines.size() - 1)(m_rng)];
 	}
 
-	void Crowd::Sync(const std::vector<std::uint32_t>& a_present)
+	double Crowd::MoodOf(std::uint32_t a_id) const
+	{
+		for (const auto& p : m_people) {
+			if (p.id == a_id) {
+				return p.mood;
+			}
+		}
+		return -1.0;
+	}
+
+	void Crowd::Sync(const std::vector<std::uint32_t>& a_present, const std::vector<std::uint32_t>* a_noTips)
 	{
 		std::erase_if(m_people, [&](const Person& p) { return std::find(a_present.begin(), a_present.end(), p.id) == a_present.end(); });
 		for (auto id : a_present) {
@@ -75,6 +85,9 @@ namespace music
 				p.purse = 0.5 + Rand() * 1.0;
 				p.sinceTip = 4.0 * Rand();
 				p.sinceShout = 6.0 * Rand();
+				if (a_noTips && std::find(a_noTips->begin(), a_noTips->end(), id) != a_noTips->end()) {
+					p.given = m_set.maxPerListener;
+				}
 				m_people.push_back(p);
 			}
 		}
@@ -117,10 +130,10 @@ namespace music
 				if (Rand() < 1.0 - std::exp(-lam * a_dt)) {
 					int gold = static_cast<int>(std::lround((1.0 + Rand() * 4.0) * (0.6 + p.mood) * p.purse * m_set.tipSize * (1.0 + a_skill)));
 					gold = std::clamp(gold, 1, m_set.maxPerListener - p.given);
-					p.given += gold;
+					p.given = m_set.oneTipEach ? m_set.maxPerListener : p.given + gold;
 					p.sinceTip = 0.0;
 					m_earned += gold;
-					a_out.push_back({ CrowdEvent::Kind::Tip, p.id, gold, Pick(kTips) });
+					a_out.push_back({ CrowdEvent::Kind::Tip, p.id, gold, Pick(kTips), {} });
 					continue;
 				}
 			}
@@ -129,7 +142,7 @@ namespace music
 				if (Rand() < 1.0 - std::exp(-lam * a_dt)) {
 					p.sinceShout = 0.0;
 					m_sinceAnyShout = 0.0;
-					a_out.push_back({ CrowdEvent::Kind::Heckle, p.id, 0, Pick(kHeckles) });
+					a_out.push_back({ CrowdEvent::Kind::Heckle, p.id, 0, Pick(kHeckles), {} });
 					continue;
 				}
 			}
@@ -137,7 +150,7 @@ namespace music
 				if (Rand() < 1.0 - std::exp(-0.03 * a_dt)) {
 					p.sinceShout = 0.0;
 					m_sinceAnyShout = 0.0;
-					a_out.push_back({ CrowdEvent::Kind::Cheer, p.id, 0, Pick(kCheers) });
+					a_out.push_back({ CrowdEvent::Kind::Cheer, p.id, 0, Pick(kCheers), {} });
 				}
 			}
 		}
@@ -149,25 +162,31 @@ namespace music
 			return;
 		}
 		if (a_score >= 0.6) {
-			int collection = 0;
+			int                        collection = 0;
+			std::vector<std::uint32_t> payers;
 			for (auto& p : m_people) {
 				p.mood = std::clamp(p.mood + (a_score - 0.5) * 0.2, 0.0, 1.0);
 				if (p.mood > 0.5 && p.given < m_set.maxPerListener) {
 					int g = static_cast<int>(std::lround((a_score - 0.5) * 10.0 * p.purse * m_set.tipSize * (1.0 + a_skill)));
 					g = std::clamp(g, 0, m_set.maxPerListener - p.given);
-					p.given += g;
-					collection += g;
+					if (g > 0) {
+						p.given = m_set.oneTipEach ? m_set.maxPerListener : p.given + g;
+						collection += g;
+						payers.push_back(p.id);
+					}
 				}
 			}
 			m_earned += collection;
-			a_out.push_back({ CrowdEvent::Kind::Applause, m_people[static_cast<std::size_t>(Rand() * m_people.size()) % m_people.size()].id, collection,
-				Pick(kCheers) });
+			CrowdEvent e{ CrowdEvent::Kind::Applause, m_people[static_cast<std::size_t>(Rand() * m_people.size()) % m_people.size()].id, collection,
+				Pick(kCheers), {} };
+			e.payers = std::move(payers);
+			a_out.push_back(std::move(e));
 		} else if (a_score < 0.35) {
 			for (auto& p : m_people) {
 				p.mood = std::clamp(p.mood - 0.05, 0.0, 1.0);
 			}
 			m_sinceAnyShout = 0.0;
-			a_out.push_back({ CrowdEvent::Kind::Heckle, m_people[static_cast<std::size_t>(Rand() * m_people.size()) % m_people.size()].id, 0, Pick(kRelief) });
+			a_out.push_back({ CrowdEvent::Kind::Heckle, m_people[static_cast<std::size_t>(Rand() * m_people.size()) % m_people.size()].id, 0, Pick(kRelief), {} });
 		}
 	}
 }

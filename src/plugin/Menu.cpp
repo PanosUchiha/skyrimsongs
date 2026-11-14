@@ -169,12 +169,14 @@ namespace Menu
 			Changed(UI::SliderFloat("How often they tip", &v.tipRate, 0.0f, 4.0f, "%.2f"));
 			Changed(UI::SliderFloat("How much they tip", &v.tipSize, 0.0f, 4.0f, "%.2f"));
 			Changed(UI::SliderInt("Most one patron gives", &v.maxTipPerListener, 0, 500, "%d septims"));
-			Hint("Per performance: put the instrument away and take it out again for a fresh audience.");
+			Hint("Each person tips you once a day.");
 			Changed(UI::SliderFloat("Patience", &v.patience, 0.2f, 3.0f, "%.2f"));
 			Hint("How quickly the room turns on a bad set (higher = quicker).");
 			Changed(UI::Checkbox("Innkeepers throw out bad bards", &v.throwOut));
 			Hint("And won't let you play there again that day.");
 			Changed(UI::SliderFloat("Speech experience", &v.speechXp, 0.0f, 3.0f, "%.2f per septim"));
+			Changed(UI::Checkbox("Listeners clap, dance and react", &v.reactions));
+			Changed(UI::SliderInt("Listeners who come over", &v.maxVisitors, 0, 4));
 			SaveRow();
 		}
 	}

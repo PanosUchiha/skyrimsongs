@@ -11,11 +11,11 @@ Status: **first version, not yet tried in game.**
 
 - **Take it out:** carry a lute or a flute (the vanilla items, anything sharing their models such as Finn's Lute,
   Pantea's Flute or the Dancer's Flute, and any mod's item, misc, weapon or armour, with "lute" or "flute" in its
-  name or model file name) and press **O** (`Hotkey`; change it in game on the SKSE Menu Framework page: *Change...*, then press the key). The player plays the game's own bard idle, which puts the
+  name or model file name) and press **\\** (`Hotkey`; change it in game on the SKSE Menu Framework page: *Change...*, then press the key). The player plays the game's own bard idle, which puts the
   instrument in their hands (Skyrim.esm `0x96F8D` lute, `0x96F8C` flute, put away with `IdleStop_Loose`
   `0x10D9EE`, the same ones Skyrim's Got Talent uses); a torch or shield in the left hand is unequipped, the camera
-  goes to third person, and a silent music type is pushed over the game's music. **Esc** puts it away (while you play, the hotkey and every other key are swallowed; Esc is
-  the only way out). Not while fighting, swimming, riding or sitting, or with
+  goes to third person, and a silent music type is pushed over the game's music. **\\** again or **Esc** puts it away, and either closes the songbook (while you play, every other key is
+  swallowed). Not while fighting, swimming, riding or sitting, or with
   a weapon out; drawing a weapon, a fight, a conversation or leaving the area stops you.
 - **The keyboard:** 37 notes, like a 37-key keyboard: three rows of seven keys, each an octave of white notes,
   lowest at the bottom (`Z X C V B N M`, `A S D F G H J`, `Q W E R T Y U`), and `I` for the top C. Shift for
@@ -50,6 +50,12 @@ please) and a purse.
   purse and the better your Speech, capped per listener per performance (`MaxTipPerListener`). Unhappy listeners
   heckle; delighted ones cheer; a song from the songbook ends in applause and a collection. You get Speech experience
   for what you earn.
+- **Once a day:** each listener tips you once a day (remembered in the co-save), whether as a tip or into an
+  applause collection.
+- **The audience moves:** happy listeners (up to `MaxVisitors`, never the innkeeper or your followers) come over
+  and stand in an arc in front of you (`KeepOffsetFromActor`), and the room uses the game's own bard-audience
+  idles: tippers hand the coin over, a delighted room claps, dances and raises a mug, an unhappy one scratches its
+  head and points. They go back to what they were doing when they cool off or you stop.
 - **Thrown out:** in an inn (an innkeeper in the room, or a location with the inn keyword) a room that stays
   hostile gets a warning from the innkeeper, then you're put out through the nearest door that leads outside and
   can't play there again until a day has passed (kept in the SKSE co-save).

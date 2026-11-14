@@ -37,6 +37,14 @@ namespace Performance
 		constexpr RE::FormID kIdleLute = 0x00096F8D;
 		constexpr RE::FormID kIdleFlute = 0x00096F8C;
 		constexpr RE::FormID kIdleStopLoose = 0x0010D9EE;
+		// the audience's idles (Skyrim.esm), the ones the game's own bard audiences use (and Skyrim's Got Talent):
+		// applause, dancing, drinking and cheering, and handing something over (a tip)
+		constexpr RE::FormID kIdleApplaud[] = { 0x000D8730, 0x000D8731, 0x000D8732, 0x000D8733 };
+		constexpr RE::FormID kIdleDance[] = { 0x000F7C8A, 0x000F7C8B };
+		constexpr RE::FormID kIdleEnjoy[] = { 0x00103653, 0x00097273 };
+		constexpr RE::FormID kIdleGive = 0x000B5E20;
+		// and the unimpressed (animation events, as Skyrim's Got Talent sends them)
+		constexpr const char* kBooEvents[] = { "idlesurrender", "idlescratchhead", "idlepointclose", "idledialoguedefensivehandgesture" };
 		constexpr std::uint32_t kSaveVersion = 1;
 
 		const char* kSongDir = "Data\\SKSE\\Plugins\\SkyrimSongs\\Songs";
@@ -49,6 +57,8 @@ namespace Performance
 		RE::TESIdleForm*               g_stopIdle = nullptr;
 		std::vector<RE::BGSSoundCategory*> g_musicCats;
 		RE::BGSMusicType*              g_silence = nullptr;  // a music type of nothing but silence, pushed while you play
+		std::vector<RE::TESIdleForm*>  g_applaud, g_dance, g_enjoy;
+		RE::TESIdleForm*               g_give = nullptr;
 		bool                           g_silenced = false;
 
 		// ------------------------------------------------------------------------------------------ state
@@ -123,6 +133,7 @@ namespace Performance
 
 		// saved
 		std::map<RE::FormID, float> g_bans;  // cell -> the day you were thrown out
+		std::map<RE::FormID, float> g_tipped;  // listener -> the day they last tipped you (once a day each)
 		int                         g_totalEarned = 0;
 		int                         g_performances = 0;
 
@@ -571,6 +582,154 @@ namespace Performance
 			spdlog::info("Let it play: {} ({} notes)", g_song.title, notes.size());
 		}
 
+		// ------------------------------------------------------------------------------------------ the audience moves
+		// Listeners react with the game's own audience idles: a tipper hands the coin over, a delighted room claps,
+		// dances and raises a mug, an unhappy one scratches its head and points. Happy listeners also come over to
+		// stand in front of you while you play (KeepOffsetFromActor, which overrides their AI until you stop).
+		constexpr int kMaxVisitors = 4;
+		struct Visitor
+		{
+			RE::FormID id = 0;
+			int        slot = 0;
+		};
+		std::vector<Visitor>                     g_visitors;
+		std::unordered_map<RE::FormID, double>   g_nextMove;  // listener -> when they may move again
+		std::vector<RE::FormID>                  g_staleVisitors;  // saved mid-performance: sent home after the load
+
+		RE::Actor* ActorOf(RE::FormID a_id) { return RE::TESForm::LookupByID<RE::Actor>(a_id); }
+
+		std::string NameOfActor(RE::Actor* a_actor)
+		{
+			const char* n = a_actor ? a_actor->GetDisplayFullName() : nullptr;
+			return n && *n ? n : "Someone";
+		}
+
+		bool NpcIdle(RE::Actor* a_actor, RE::TESIdleForm* a_idle)
+		{
+			if (!a_actor || !a_idle || a_actor->IsDead() || !a_actor->Is3DLoaded()) {
+				return false;
+			}
+			auto* proc = a_actor->GetActorRuntimeData().currentProcess;
+			return proc && proc->PlayIdle(a_actor, a_idle, nullptr);
+		}
+
+		template <class T>
+		const T& PickOf(const std::vector<T>& a_v)
+		{
+			return a_v[std::uniform_int_distribution<std::size_t>(0, a_v.size() - 1)(g_rng)];
+		}
+
+		void React(RE::FormID a_id, int a_kind)  // 0 tip, 1 cheer/applause, 2 boo, 3 enjoy (dance / drink)
+		{
+			auto* a = ActorOf(a_id);
+			if (!a || !Config::Get().reactions) {
+				return;
+			}
+			switch (a_kind) {
+			case 0:
+				NpcIdle(a, g_give);
+				break;
+			case 1:
+				if (!g_applaud.empty()) {
+					NpcIdle(a, PickOf(g_applaud));
+				}
+				break;
+			case 2:
+				a->NotifyAnimationGraph(kBooEvents[std::uniform_int_distribution<int>(0, 3)(g_rng)]);
+				break;
+			default:
+				{
+					const bool dance = !g_dance.empty() && std::uniform_int_distribution<int>(0, 1)(g_rng) == 0;
+					const auto& set = dance ? g_dance : (g_enjoy.empty() ? g_applaud : g_enjoy);
+					if (!set.empty()) {
+						NpcIdle(a, PickOf(set));
+					}
+				}
+				break;
+			}
+			g_nextMove[a_id] = Now() + 6.0 + std::uniform_real_distribution<double>(0.0, 8.0)(g_rng);
+		}
+
+		void SendAway(const Visitor& a_v)
+		{
+			if (auto* a = ActorOf(a_v.id)) {
+				Call(a, "ClearKeepOffsetFromActor");
+			}
+		}
+
+		void SendAllAway()
+		{
+			for (const auto& v : g_visitors) {
+				SendAway(v);
+			}
+			g_visitors.clear();
+			g_nextMove.clear();
+		}
+
+		// every half second: who comes over, who drifts off, and the room's own little movements
+		void MoveAudience(const std::vector<std::uint32_t>& a_present, RE::FormID a_keeper)
+		{
+			const auto& cfg = Config::Get();
+			auto*       player = Player();
+			if (!player) {
+				return;
+			}
+			const double now = Now();
+			// visitors who've cooled off, or left, go back to what they were doing
+			std::erase_if(g_visitors, [&](const Visitor& v) {
+				const double mood = g_crowd.MoodOf(v.id);
+				if (mood < 0.45) {
+					SendAway(v);
+					return true;
+				}
+				return false;
+			});
+			// happy listeners come over (not the innkeeper: someone has to mind the bar)
+			const int most = (std::min)(cfg.maxVisitors, kMaxVisitors);
+			for (auto id : a_present) {
+				if (static_cast<int>(g_visitors.size()) >= most) {
+					break;
+				}
+				if (id == a_keeper || g_crowd.MoodOf(id) < 0.65 ||
+					std::any_of(g_visitors.begin(), g_visitors.end(), [&](const Visitor& v) { return v.id == id; })) {
+					continue;
+				}
+				auto* a = ActorOf(id);
+				if (!a || a->IsPlayerTeammate()) {
+					continue;  // followers are with you already
+				}
+				int slot = 0;
+				while (std::any_of(g_visitors.begin(), g_visitors.end(), [&](const Visitor& v) { return v.slot == slot; })) {
+					++slot;
+				}
+				// a little arc in front of you, facing you
+				static constexpr float kAngles[kMaxVisitors] = { -20.0f, 25.0f, -55.0f, 60.0f };
+				const float            rad = kAngles[slot] * 3.14159265f / 180.0f, r = 210.0f;
+				Call(a, "KeepOffsetFromActor", static_cast<RE::Actor*>(player), r * std::sin(rad), r * std::cos(rad), 0.0f, 0.0f, 0.0f, 180.0f, 80.0f, 30.0f);
+				g_visitors.push_back({ id, slot });
+				g_nextMove[id] = now + 4.0;  // let them get there first
+				spdlog::info("{} comes over to listen", NameOfActor(a));
+			}
+			// the room's movements
+			if (!cfg.reactions) {
+				return;
+			}
+			for (auto id : a_present) {
+				auto it = g_nextMove.find(id);
+				if (it != g_nextMove.end() && now < it->second) {
+					continue;
+				}
+				const double mood = g_crowd.MoodOf(id);
+				if (mood > 0.75) {
+					React(id, std::uniform_int_distribution<int>(0, 2)(g_rng) == 0 ? 1 : 3);
+				} else if (mood >= 0.0 && mood < 0.3 && std::uniform_int_distribution<int>(0, 3)(g_rng) == 0) {
+					React(id, 2);
+				} else {
+					g_nextMove[id] = now + 3.0;
+				}
+			}
+		}
+
 		// ------------------------------------------------------------------------------------------ the crowd
 		void ScanListeners()
 		{
@@ -615,7 +774,16 @@ namespace Performance
 					g_keeper = id;
 				}
 			}
-			g_crowd.Sync(ids);
+			// who already tipped you today
+			const float               today = RE::Calendar::GetSingleton() ? std::floor(RE::Calendar::GetSingleton()->GetDaysPassed()) : 0.0f;
+			std::vector<std::uint32_t> noTips;
+			for (auto id : ids) {
+				if (auto it = g_tipped.find(id); it != g_tipped.end() && std::floor(it->second) >= today) {
+					noTips.push_back(id);
+				}
+			}
+			g_crowd.Sync(ids, &noTips);
+			MoveAudience(ids, g_keeper);
 			bool innLoc = false;
 			if (auto* loc = player->GetCurrentLocation()) {
 				innLoc = loc->HasKeywordID(kLocTypeInn);
@@ -629,24 +797,41 @@ namespace Performance
 			return it == g_names.end() ? "Someone" : it->second;
 		}
 
+		void MarkTipped(RE::FormID a_id)
+		{
+			g_tipped[a_id] = RE::Calendar::GetSingleton() ? RE::Calendar::GetSingleton()->GetDaysPassed() : 0.0f;
+		}
+
 		void HandleCrowd(const std::vector<music::CrowdEvent>& a_events)
 		{
 			for (const auto& e : a_events) {
 				switch (e.kind) {
 				case music::CrowdEvent::Kind::Tip:
 					GiveGold(e.gold);
+					MarkTipped(e.id);
+					React(e.id, 0);
 					Say(e.line.empty() ? fmt::format("{} tosses you {} septim{}.", NameOf(e.id), e.gold, e.gold == 1 ? "" : "s") :
 					                     fmt::format("{} tosses you {} septim{}. \"{}\"", NameOf(e.id), e.gold, e.gold == 1 ? "" : "s", e.line),
 						kGoldCol);
 					break;
 				case music::CrowdEvent::Kind::Heckle:
+					React(e.id, 2);
 					Say(fmt::format("{}: \"{}\"", NameOf(e.id), e.line), kRed);
 					break;
 				case music::CrowdEvent::Kind::Cheer:
+					React(e.id, 1);
 					Say(fmt::format("{}: \"{}\"", NameOf(e.id), e.line), kGreen);
 					break;
 				case music::CrowdEvent::Kind::Applause:
 					GiveGold(e.gold);
+					for (auto id : e.payers) {
+						MarkTipped(id);
+					}
+					for (auto& [id, name] : g_names) {
+						if (g_crowd.MoodOf(id) >= 0.5) {
+							React(id, 1);
+						}
+					}
 					Say(e.gold > 0 ? fmt::format("Applause! The room puts together {} septims. {}: \"{}\"", e.gold, NameOf(e.id), e.line) :
 					                 fmt::format("Applause! {}: \"{}\"", NameOf(e.id), e.line),
 						kGreen);
@@ -768,6 +953,7 @@ namespace Performance
 			cs.tipSize = Config::Get().tipSize;
 			cs.maxPerListener = Config::Get().maxTipPerListener;
 			cs.patience = Config::Get().patience;
+			cs.oneTipEach = true;  // and once a day: see g_tipped
 			g_crowd.SetSettings(cs);
 			g_names.clear();
 			g_feed.clear();
@@ -792,6 +978,7 @@ namespace Performance
 			}
 			g_playing = false;
 			g_midiLive = false;
+			SendAllAway();
 			ReleaseAllKeys();
 			Audio::StopSong();
 			MidiIn::Close();
@@ -1410,6 +1597,18 @@ namespace Performance
 		g_idles[0] = RE::TESForm::LookupByID<RE::TESIdleForm>(cfg.luteIdle ? cfg.luteIdle : kIdleLute);
 		g_idles[1] = RE::TESForm::LookupByID<RE::TESIdleForm>(cfg.fluteIdle ? cfg.fluteIdle : kIdleFlute);
 		g_stopIdle = RE::TESForm::LookupByID<RE::TESIdleForm>(cfg.stopIdle ? cfg.stopIdle : kIdleStopLoose);
+		auto idles = [](auto& a_ids, std::vector<RE::TESIdleForm*>& a_out) {
+			for (auto id : a_ids) {
+				if (auto* f = RE::TESForm::LookupByID<RE::TESIdleForm>(id)) {
+					a_out.push_back(f);
+				}
+			}
+		};
+		idles(kIdleApplaud, g_applaud);
+		idles(kIdleDance, g_dance);
+		idles(kIdleEnjoy, g_enjoy);
+		g_give = RE::TESForm::LookupByID<RE::TESIdleForm>(kIdleGive);
+		spdlog::info("Audience idles: applause {}, dance {}, enjoy {}, give {}", g_applaud.size(), g_dance.size(), g_enjoy.size(), g_give != nullptr);
 		// a music type that's only silence: the highest priority one
 		for (auto* m : dh->GetFormArray<RE::BGSMusicType>()) {
 			if (!m || m->tracks.empty()) {
@@ -1444,6 +1643,12 @@ namespace Performance
 		std::lock_guard lk(g_mtx);
 		Stop("game loaded");
 		MuteMusic(false);
+		for (auto id : g_staleVisitors) {
+			if (auto* a = ActorOf(id)) {
+				Call(a, "ClearKeepOffsetFromActor");
+			}
+		}
+		g_staleVisitors.clear();
 	}
 
 	void FrameTick()
@@ -1475,7 +1680,7 @@ namespace Performance
 		}
 		const auto mode = Overlay::GetMode();
 		if (mode == Overlay::Mode::Book) {
-			if (a_down && a_scan == 0x01) {  // only Esc leaves the songbook
+			if (a_down && (a_scan == 0x01 || a_scan == Config::Get().hotkey)) {  // Esc or the hotkey closes the songbook
 				Overlay::SetMode(Overlay::Mode::Playing);
 			}
 			return;
@@ -1499,7 +1704,11 @@ namespace Performance
 			}
 			return;
 		}
-		// the rest (key down). While you play, the hotkey and every other key is swallowed: only Esc gets you out.
+		// the rest (key down). While you play, every other key is swallowed: the hotkey or Esc gets you out.
+		if (a_scan == Config::Get().hotkey) {
+			Stop("hotkey");
+			return;
+		}
 		switch (a_scan) {
 		case 0x01:  // Esc: stop the song, or put the instrument away
 			if (g_act != Act::Free) {
@@ -1625,6 +1834,22 @@ namespace Performance
 			a_intfc->WriteRecordData(cell);
 			a_intfc->WriteRecordData(day);
 		}
+		if (a_intfc->OpenRecord('VIST', kSaveVersion)) {
+			// a save made mid-performance: the listeners standing with you go home after it's loaded
+			const auto v = static_cast<std::uint32_t>(g_visitors.size());
+			a_intfc->WriteRecordData(v);
+			for (const auto& vis : g_visitors) {
+				a_intfc->WriteRecordData(vis.id);
+			}
+		}
+		if (a_intfc->OpenRecord('TIPS', kSaveVersion)) {
+			const auto t = static_cast<std::uint32_t>(g_tipped.size());
+			a_intfc->WriteRecordData(t);
+			for (const auto& [id, day] : g_tipped) {
+				a_intfc->WriteRecordData(id);
+				a_intfc->WriteRecordData(day);
+			}
+		}
 		if (a_intfc->OpenRecord('STAT', kSaveVersion)) {
 			a_intfc->WriteRecordData(g_totalEarned);
 			a_intfc->WriteRecordData(g_performances);
@@ -1635,6 +1860,7 @@ namespace Performance
 	{
 		std::lock_guard lk(g_mtx);
 		g_bans.clear();
+		g_tipped.clear();
 		std::uint32_t type = 0, version = 0, length = 0;
 		while (a_intfc->GetNextRecordInfo(type, version, length)) {
 			if (version != kSaveVersion) {
@@ -1652,6 +1878,28 @@ namespace Performance
 						g_bans[resolved] = day;
 					}
 				}
+			} else if (type == 'VIST') {
+				std::uint32_t n = 0;
+				a_intfc->ReadRecordData(n);
+				for (std::uint32_t i = 0; i < n && i < 16; ++i) {
+					RE::FormID id = 0, resolved = 0;
+					a_intfc->ReadRecordData(id);
+					if (a_intfc->ResolveFormID(id, resolved)) {
+						g_staleVisitors.push_back(resolved);
+					}
+				}
+			} else if (type == 'TIPS') {
+				std::uint32_t n = 0;
+				a_intfc->ReadRecordData(n);
+				for (std::uint32_t i = 0; i < n && i < 100000; ++i) {
+					RE::FormID id = 0, resolved = 0;
+					float      day = 0.0f;
+					a_intfc->ReadRecordData(id);
+					a_intfc->ReadRecordData(day);
+					if (a_intfc->ResolveFormID(id, resolved)) {
+						g_tipped[resolved] = day;
+					}
+				}
 			} else if (type == 'STAT') {
 				a_intfc->ReadRecordData(g_totalEarned);
 				a_intfc->ReadRecordData(g_performances);
@@ -1664,6 +1912,7 @@ namespace Performance
 	{
 		std::lock_guard lk(g_mtx);
 		g_bans.clear();
+		g_tipped.clear();
 		g_totalEarned = 0;
 		g_performances = 0;
 	}

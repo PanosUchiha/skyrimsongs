@@ -7,6 +7,7 @@
 #include "../src/music/Synth.h"
 
 #include <cmath>
+#include <map>
 #include <cstdio>
 #include <random>
 #include <string>
@@ -336,6 +337,33 @@ namespace
 		std::printf("crowd, 3 min played badly: %d tips, %d heckles, mood %.2f\n", tips, heckles, mood);
 		CHECK(tips == 0 && heckles >= 3 && mood < 0.15);
 
+		// one tip each (the plugin: once a day), and those who tipped earlier today give nothing
+		{
+			Crowd one(5);
+			Crowd::Settings st;
+			st.oneTipEach = true;
+			one.SetSettings(st);
+			const std::vector<std::uint32_t> tippedToday = { 3 };
+			one.Sync({ 1, 2, 3, 4 }, &tippedToday);
+			std::vector<CrowdEvent> ev;
+			for (int i = 0; i < 6000; ++i) {
+				one.Step(0.1, 0.95, 0.5, true, ev);
+			}
+			std::map<std::uint32_t, int> tipsBy;
+			for (const auto& e : ev) {
+				if (e.kind == CrowdEvent::Kind::Tip) {
+					++tipsBy[e.id];
+				}
+			}
+			CHECK(!tipsBy.contains(3));
+			for (const auto& [id, n] : tipsBy) {
+				CHECK(n == 1);
+			}
+			CHECK(tipsBy.size() == 3);
+			ev.clear();
+			one.SongEnded(0.95, 0.5, ev);
+			CHECK(ev.size() == 1 && ev[0].payers.empty() && ev[0].gold == 0);  // everyone has given already
+		}
 		Crowd c(3);
 		c.Sync({ 10, 11 });
 		CHECK(c.Size() == 2);
