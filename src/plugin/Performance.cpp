@@ -591,7 +591,9 @@ namespace Performance
 		{
 			RE::FormID id = 0;
 			int        slot = 0;
+			double     leaveAt = 0.0;  // they have places to be: each stays a while, then wanders off mid-song
 		};
+		std::unordered_map<RE::FormID, double> g_awayUntil;  // wandered off: not coming back for a while
 		std::vector<Visitor>                     g_visitors;
 		std::unordered_map<RE::FormID, double>   g_nextMove;  // listener -> when they may move again
 		std::vector<RE::FormID>                  g_staleVisitors;  // saved mid-performance: sent home after the load
@@ -664,6 +666,7 @@ namespace Performance
 			}
 			g_visitors.clear();
 			g_nextMove.clear();
+			g_awayUntil.clear();
 		}
 
 		// every half second: who comes over, who drifts off, and the room's own little movements
@@ -675,11 +678,17 @@ namespace Performance
 				return;
 			}
 			const double now = Now();
-			// visitors who've cooled off, or left, go back to what they were doing
+			// visitors who've cooled off go back to what they were doing, and any of them may just wander off
 			std::erase_if(g_visitors, [&](const Visitor& v) {
 				const double mood = g_crowd.MoodOf(v.id);
-				if (mood < 0.45) {
+				if (mood < 0.45 || now >= v.leaveAt) {
 					SendAway(v);
+					if (mood >= 0.45) {
+						g_awayUntil[v.id] = now + std::uniform_real_distribution<double>(90.0, 240.0)(g_rng);
+						if (auto* a = ActorOf(v.id)) {
+							Say(fmt::format("{} wanders off.", NameOfActor(a)), kDim);
+						}
+					}
 					return true;
 				}
 				return false;
@@ -689,6 +698,9 @@ namespace Performance
 			for (auto id : a_present) {
 				if (static_cast<int>(g_visitors.size()) >= most) {
 					break;
+				}
+				if (auto away = g_awayUntil.find(id); away != g_awayUntil.end() && now < away->second) {
+					continue;
 				}
 				if (id == a_keeper || g_crowd.MoodOf(id) < 0.65 ||
 					std::any_of(g_visitors.begin(), g_visitors.end(), [&](const Visitor& v) { return v.id == id; })) {
@@ -706,7 +718,8 @@ namespace Performance
 				static constexpr float kAngles[kMaxVisitors] = { -20.0f, 25.0f, -55.0f, 60.0f };
 				const float            rad = kAngles[slot] * 3.14159265f / 180.0f, r = 210.0f;
 				Call(a, "KeepOffsetFromActor", static_cast<RE::Actor*>(player), r * std::sin(rad), r * std::cos(rad), 0.0f, 0.0f, 0.0f, 180.0f, 80.0f, 30.0f);
-				g_visitors.push_back({ id, slot });
+				// how long they stay: anything from half a minute to a few minutes
+				g_visitors.push_back({ id, slot, now + std::uniform_real_distribution<double>(30.0, 180.0)(g_rng) });
 				g_nextMove[id] = now + 4.0;  // let them get there first
 				spdlog::info("{} comes over to listen", NameOfActor(a));
 			}
