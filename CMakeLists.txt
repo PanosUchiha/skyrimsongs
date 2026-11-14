@@ -14,7 +14,7 @@ include(extern/CommonLibSSE-NG/cmake/CommonLibSSE.cmake)
 
 find_package(imgui CONFIG REQUIRED)
 
-set(MUSIC_SOURCES src/music/Synth.cpp src/music/Midi.cpp src/music/Songs.cpp src/music/Judge.cpp src/music/Crowd.cpp)
+set(MUSIC_SOURCES src/music/Synth.cpp src/music/Midi.cpp src/music/Songs.cpp src/music/Judge.cpp src/music/Crowd.cpp src/music/Wav.cpp)
 
 add_commonlibsse_plugin(${PROJECT_NAME}
     AUTHOR "evodube"

@@ -43,6 +43,16 @@ namespace music
 		void SetVolume(float a_v);
 		void SetReverb(float a_wet);
 
+		// Recorded notes to play an instrument from instead of synthesising it: each tuned to its MIDI note; the
+		// nearest one is played, retuned, for every note, looped while held. Set them before the audio starts.
+		struct Sample
+		{
+			int                root = 60;
+			std::vector<float> pcm;  // mono, at the synth's rate
+		};
+		void SetSamples(Instrument a_inst, std::vector<Sample> a_samples);
+		bool HasSamples(Instrument a_inst) const { return !m_samples[static_cast<int>(a_inst)].empty(); }
+
 		// Mono, overwrites a_out. Call from one thread only (the audio thread).
 		void Render(float* a_out, int a_frames);
 		int  ActiveVoices() const { return m_active; }
@@ -97,6 +107,9 @@ namespace music
 			float  rz[3][2]{};                   // breath resonating at the first three harmonics (band-passes)
 			float  jitP = 0.0f, jitA = 0.0f;     // a player's unsteadiness: slow wander in pitch and loudness
 			float  hissX = 0.0f, hissY = 0.0f;   // the air's hiss (high-passed noise)
+			// sampled
+			int    smp = -1;
+			double spos = 0.0;
 			// coin
 			float  coinVol = 0.0f;
 			double phases[6]{};
@@ -109,6 +122,8 @@ namespace music
 		float  LuteSample(Voice& a_v);
 		float  FluteSample(Voice& a_v);
 		float  CoinSample(Voice& a_v);
+		float  SampleTick(Voice& a_v);
+		int    NearestSample(Instrument a_inst, int a_pitch) const;
 		float  Noise();
 		float  Reverb(float a_in);
 
@@ -122,6 +137,7 @@ namespace music
 		float               m_volume = 0.8f;
 		float               m_wet = 0.16f;
 		int                 m_active = 0;
+		std::vector<Sample> m_samples[2];
 		std::vector<int>    m_fluteHeld;  // live flute keys down, oldest first (the newest sounds)
 
 		// the lute's body: three band-pass resonances and a DC block

@@ -3,6 +3,8 @@
 #include "Audio.h"
 #include "Config.h"
 
+#include "../music/Wav.h"
+
 // CommonLib targets Windows 7; XAudio2 2.8+ needs 8 or later in its header. We load the DLL ourselves (see Start).
 #pragma push_macro("_WIN32_WINNT")
 #undef _WIN32_WINNT
@@ -52,6 +54,42 @@ namespace Audio
 		int                        g_nextBuf = 0;
 
 		void FillAndSubmit();
+
+		// Recorded notes, if you've put any in Data\SKSE\Plugins\SkyrimSongs\Samples\<Lute|Flute>\<midi note>.wav:
+		// that instrument is then played from them instead of synthesised.
+		void LoadSamples(music::Synth& a_synth)
+		{
+			for (auto inst : { music::Instrument::Lute, music::Instrument::Flute }) {
+				const std::filesystem::path dir = std::string("Data\\SKSE\\Plugins\\SkyrimSongs\\Samples\\") + music::InstrumentName(inst);
+				std::error_code             ec;
+				if (!std::filesystem::is_directory(dir, ec)) {
+					continue;
+				}
+				std::vector<music::Synth::Sample> set;
+				for (const auto& e : std::filesystem::directory_iterator(dir, ec)) {
+					int root = 0;
+					try {
+						root = std::stoi(e.path().stem().string());
+					} catch (...) {
+						continue;
+					}
+					std::ifstream             f(e.path(), std::ios::binary);
+					std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+					music::Synth::Sample      smp;
+					smp.root = root;
+					std::string err;
+					if (root < 12 || root > 120 || !music::ReadWav(bytes, static_cast<int>(kRate), smp.pcm, &err)) {
+						spdlog::warn("Samples: {}: {}", e.path().filename().string(), err.empty() ? "not a note number" : err);
+						continue;
+					}
+					set.push_back(std::move(smp));
+				}
+				if (!set.empty()) {
+					spdlog::info("Samples: the {} plays from {} recorded notes", music::InstrumentName(inst), set.size());
+				}
+				a_synth.SetSamples(inst, std::move(set));
+			}
+		}
 
 		class Callback final : public IXAudio2VoiceCallback
 		{
@@ -148,6 +186,7 @@ namespace Audio
 		wf.nBlockAlign = 4;
 		wf.nAvgBytesPerSec = kRate * 4;
 		g_synth = std::make_unique<music::Synth>(static_cast<float>(kRate));
+		LoadSamples(*g_synth);
 		g_synth->SetVolume(Config::Get().volume);
 		g_synth->SetReverb(Config::Get().reverb);
 		if (FAILED(g_xa->CreateSourceVoice(&g_voice, &wf, 0, 2.0f, &g_callback)) || !g_voice) {

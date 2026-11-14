@@ -5,6 +5,7 @@
 #include "../src/music/Midi.h"
 #include "../src/music/Songs.h"
 #include "../src/music/Synth.h"
+#include "../src/music/Wav.h"
 
 #include <cmath>
 #include <map>
@@ -440,6 +441,53 @@ namespace
 		s.Silence();
 		s.Render(buf.data(), 16);
 		CHECK(s.ActiveVoices() == 0);
+		// a WAV (16-bit stereo 24 kHz) read as mono at 48 kHz, then played as a sampled flute
+		{
+			std::vector<std::uint8_t> w = { 'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E', 'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 2, 0 };
+			auto                      put32 = [&](std::uint32_t v) {
+                for (int i = 0; i < 4; ++i) {
+                    w.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
+                }
+			};
+			put32(24000);
+			put32(24000 * 4);
+			w.insert(w.end(), { 4, 0, 16, 0, 'd', 'a', 't', 'a' });
+			put32(24000 * 4);
+			for (int i = 0; i < 24000; ++i) {  // a second of A5 (880 Hz) - not 440, so the retune is tested
+				const auto v = static_cast<std::int16_t>(std::sin(2.0 * 3.14159265 * 880.0 * i / 24000.0) * 16000);
+				for (int c = 0; c < 2; ++c) {
+					w.push_back(static_cast<std::uint8_t>(v & 0xFF));
+					w.push_back(static_cast<std::uint8_t>((v >> 8) & 0xFF));
+				}
+			}
+			Synth::Sample smp;
+			smp.root = 81;
+			CHECK(ReadWav(w, 48000, smp.pcm));
+			CHECK(smp.pcm.size() > 47000 && smp.pcm.size() <= 48000);
+			CHECK(!ReadWav({ 1, 2, 3 }, 48000, smp.pcm));
+			CHECK(ReadWav(w, 48000, smp.pcm));
+			Synth sampled(48000.0f);
+			sampled.SetSamples(Instrument::Flute, { smp });
+			CHECK(sampled.HasSamples(Instrument::Flute) && !sampled.HasSamples(Instrument::Lute));
+			sampled.NoteOn(Instrument::Flute, 69, 0.8f);  // A4: the A5 recording an octave down
+			std::vector<float> out(48000 * 3);
+			sampled.Render(out.data(), static_cast<int>(out.size()));  // held for 3 s: longer than the recording, so it loops
+			int    lag = 0;
+			double bestAc = -1.0;
+			for (int l = 60; l < 200; ++l) {
+				double ac = 0.0;
+				for (int i = 100000; i < 120000; ++i) {
+					ac += out[i] * out[i + l];
+				}
+				if (ac > bestAc) {
+					bestAc = ac;
+					lag = l;
+				}
+			}
+			std::printf("sampled flute A4 (from an A5 recording), still sounding after 2 s: %.1f Hz\n", 48000.0 / lag);
+			CHECK(std::abs(48000.0 / lag - 440.0) < 4.0);
+			CHECK(sampled.ActiveVoices() == 1);
+		}
 	}
 }
 

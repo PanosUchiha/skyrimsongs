@@ -2,9 +2,13 @@
 //   build/preview_lute.wav   Greensleeves on the lute
 //   build/preview_flute.wav  Amazing Grace on the flute
 //   build/preview_tip.wav    a patron's coin
-// Usage: render_preview <out dir> [song.mid ...]   (each .mid also rendered on both instruments, as "Play" does)
+// Usage: render_preview <out dir> [song.mid ...] [--flute-samples <dir>]   (each .mid also rendered on both
+// instruments, as "Play" does; with sampled flute notes from <dir>/<midi note>.wav if given)
 #include "../src/music/Songs.h"
 #include "../src/music/Synth.h"
+#include "../src/music/Wav.h"
+
+#include <filesystem>
 
 #include <algorithm>
 #include <cmath>
@@ -41,10 +45,13 @@ namespace
 		}
 	}
 
+	std::vector<music::Synth::Sample> g_fluteSamples;
+
 	std::vector<float> Play(music::Instrument a_inst, const std::vector<music::Note>& a_notes, int a_shift, double a_tail, bool a_live = true)
 	{
 		constexpr int      kRate = 48000, kBlock = 256;
 		music::Synth       s(static_cast<float>(kRate));
+		s.SetSamples(music::Instrument::Flute, g_fluteSamples);
 		std::vector<float> out;
 		double             end = 0.0;
 		for (const auto& n : a_notes) {
@@ -84,6 +91,27 @@ namespace
 int main(int argc, char** argv)
 {
 	const std::string dir = argc > 1 ? argv[1] : ".";
+	std::vector<std::string> mids;
+	for (int a = 2; a < argc; ++a) {
+		if (std::string(argv[a]) == "--flute-samples" && a + 1 < argc) {
+			for (const auto& e : std::filesystem::directory_iterator(argv[++a])) {
+				std::ifstream             f(e.path(), std::ios::binary);
+				std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+				music::Synth::Sample      smp;
+				try {
+					smp.root = std::stoi(e.path().stem().string());
+				} catch (...) {
+					continue;
+				}
+				if (music::ReadWav(bytes, 48000, smp.pcm)) {
+					g_fluteSamples.push_back(std::move(smp));
+				}
+			}
+			std::printf("%zu flute samples\n", g_fluteSamples.size());
+		} else {
+			mids.push_back(argv[a]);
+		}
+	}
 	const auto        songs = music::BuiltInSongs();
 	for (const auto& s : songs) {
 		if (s.title == "Greensleeves") {
@@ -119,17 +147,17 @@ int main(int argc, char** argv)
 		s.Render(out.data(), 48000);
 		WriteWav(dir + "/preview_tip.wav", out, 48000);
 	}
-	for (int a = 2; a < argc; ++a) {
-		std::ifstream             f(argv[a], std::ios::binary);
+	for (std::size_t a = 0; a < mids.size(); ++a) {
+		std::ifstream             f(mids[a], std::ios::binary);
 		std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 		music::Song               song;
 		std::string               err;
 		if (!music::SongFromMidi(bytes, "song", song, &err)) {
-			std::printf("%s: %s\n", argv[a], err.c_str());
+			std::printf("%s: %s\n", mids[a].c_str(), err.c_str());
 			continue;
 		}
-		WriteWav(dir + "/song" + std::to_string(a - 1) + "_lute.wav", Play(music::Instrument::Lute, music::FoldIntoRange(song.all), 0, 2.0, false), 48000);
-		WriteWav(dir + "/song" + std::to_string(a - 1) + "_flute.wav", Play(music::Instrument::Flute, music::FoldIntoRange(song.all), 0, 2.0, false),
+		WriteWav(dir + "/song" + std::to_string(a + 1) + "_lute.wav", Play(music::Instrument::Lute, music::FoldIntoRange(song.all), 0, 2.0, false), 48000);
+		WriteWav(dir + "/song" + std::to_string(a + 1) + "_flute.wav", Play(music::Instrument::Flute, music::FoldIntoRange(song.all), 0, 2.0, false),
 			48000);
 	}
 	std::printf("wrote preview_lute.wav, preview_flute.wav and preview_tip.wav to %s\n", dir.c_str());
