@@ -312,11 +312,12 @@ namespace Performance
 				g_idleAt = -1.0;
 				return;
 			}
-			if (++g_idleTries < 5) {
-				g_idleAt = Now() + 0.4;
+			if (++g_idleTries < 12) {
+				spdlog::info("The game isn't ready for the {} idle yet (try {})", InstName(g_inst), g_idleTries);
+				g_idleAt = Now() + 0.25;
 				return;
 			}
-			spdlog::warn("The game refused the {} idle {:08X} five times; asking through Papyrus", InstName(g_inst), idle->GetFormID());
+			spdlog::warn("The game refused the {} idle {:08X} twelve times; asking through Papyrus", InstName(g_inst), idle->GetFormID());
 			Call(Player(), "PlayIdle", idle);
 			g_idleAt = -1.0;
 		}
@@ -1303,8 +1304,12 @@ namespace Performance
 					BackToFree();
 					SetInst(inst);
 					g_lastInst = inst;
-					StopIdle();
-					PlayIdleFor(inst, 0.7);
+					// switch straight away: snap out of the old instrument's idle (no put-away animation to wait out,
+					// which swallowed the new idle while the songbook was open) and start the new one
+					if (auto* p = Player()) {
+						p->NotifyAnimationGraph("IdleForceDefaultState");
+					}
+					PlayIdleFor(inst, 0.25);
 				}
 				if (on) {
 					ImGui::PopStyleColor();
