@@ -1047,8 +1047,7 @@ namespace Performance
 			const float W = (std::min)(980.0f * s, sw * 0.92f);
 			const bool  along = g_act == Act::Along;
 			const float headH = 34.0f * s, laneH = 30.0f * s, hwH = along ? laneH * 3.0f + 14.0f * s : (g_act == Act::Auto ? 26.0f * s : 0.0f);
-			const float keyH = 38.0f * s, keyGap = 6.0f * s;
-			const float kbH = cfg.showKeyboard ? keyH * 3.0f + keyGap * 2.0f + 10.0f * s : 0.0f;
+			const float kbH = cfg.showKeyboard ? 150.0f * s : 0.0f;  // the piano
 			const float hintH = 24.0f * s;
 			const float H = headH + hwH + kbH + hintH + 18.0f * s;
 			const ImVec2 p0((sw - W) * 0.5f, sh - H - 26.0f * s), p1(p0.x + W, p0.y + H);
@@ -1131,11 +1130,9 @@ namespace Performance
 				y += hwH;
 			}
 
-			// the keyboard: three rows of keys, lit as their notes sound
+			// the keyboard, lit as its notes sound
 			if (cfg.showKeyboard) {
 				const int   base = Base();
-				const float kw = 60.0f * s;
-				const float rowW = kw * 7.0f + keyGap * 6.0f;
 				// what's sounding now: your notes, and in "let it play" the song's
 				std::set<int> sounding;
 				for (const auto& [pitch, t] : g_lit) {
@@ -1164,23 +1161,42 @@ namespace Performance
 						}
 					}
 				}
-				for (int r = 2; r >= 0; --r) {
-					const float ry = y + (2 - r) * (keyH + keyGap) + 4.0f * s;
-					const float rx = p0.x + (W - rowW) * 0.5f + (2 - r) * kw * 0.18f;  // staggered like a real keyboard
-					// the top row has an eighth key, I: the top C (37 notes in all)
-					for (int c = 0; c < (r == 2 ? 8 : 7); ++c) {
-						const bool   topC = c == 7;
-						const int    pitch = topC ? base + 36 : base + r * 12 + music::keymap::kWhite[c];
-						const bool   lit = sounding.contains(pitch);
-						const bool   sharpLit = !topC && sounding.contains(pitch + 1) && c != 2 && c != 6;
-						const bool   next = nextPitch == pitch || (!topC && nextPitch == pitch + 1 && c != 2 && c != 6);
-						const ImVec2 k0(rx + c * (kw + keyGap), ry), k1(k0.x + kw, ry + keyH);
-						dl->AddRectFilled(k0, k1, lit ? IM_COL32(230, 190, 105, 235) : sharpLit ? IM_COL32(170, 130, 70, 235) : IM_COL32(48, 40, 32, 230), 5.0f * s);
-						dl->AddRect(k0, k1, next ? kGoldCol : IM_COL32(200, 160, 90, 70), 5.0f * s, 0, next ? 2.5f * s : 1.0f * s);
-						Text(dl, F.key, { k0.x + 7.0f * s, k0.y + 3.0f * s }, lit ? IM_COL32(30, 20, 10, 255) : kInk, std::string(1, topC ? 'I' : music::keymap::kLetters[r][c]));
-						Text(dl, F.sm, { k1.x - 6.0f * s, k1.y - 19.0f * s }, lit ? IM_COL32(50, 35, 20, 255) : kDim, music::NoteName(sharpLit ? pitch + 1 : pitch),
-							1.0f);
+				// a 37-key piano, C to C three octaves up: 22 white keys, 15 black. Each white key shows the letter that
+				// plays it; each black key shows Shift + the white key on its left.
+				const float  pw = (std::min)(W - 32.0f * s, 22.0f * 76.0f * s);
+				const float  ww = pw / 22.0f;
+				const float  px = p0.x + (W - pw) * 0.5f, py = y + 4.0f * s;
+				const float  wh = kbH - 10.0f * s, bh = wh * 0.6f, bw = ww * 0.62f;
+				const ImU32  litCol = IM_COL32(230, 190, 105, 240);
+				auto letterFor = [](int a_w) -> char { return a_w == 21 ? 'I' : music::keymap::kLetters[a_w / 7][a_w % 7]; };
+				// white keys
+				for (int w = 0; w < 22; ++w) {
+					const int    pitch = w == 21 ? base + 36 : base + (w / 7) * 12 + music::keymap::kWhite[w % 7];
+					const bool   lit = sounding.contains(pitch);
+					const bool   next = nextPitch == pitch;
+					const ImVec2 k0(px + w * ww, py), k1(k0.x + ww - 2.0f * s, py + wh);
+					dl->AddRectFilled(k0, k1, lit ? litCol : IM_COL32(222, 212, 190, 235), 4.0f * s, ImDrawFlags_RoundCornersBottom);
+					dl->AddRect(k0, k1, next ? kGoldCol : IM_COL32(60, 45, 30, 200), 4.0f * s, ImDrawFlags_RoundCornersBottom, next ? 3.0f * s : 1.0f * s);
+					const ImU32 ink = IM_COL32(40, 28, 16, 255);
+					Text(dl, F.key, { (k0.x + k1.x) * 0.5f, k1.y - 50.0f * s }, ink, std::string(1, letterFor(w)), 0.5f);
+					Text(dl, F.sm, { (k0.x + k1.x) * 0.5f, k1.y - 23.0f * s }, IM_COL32(90, 70, 50, 255), music::NoteName(pitch), 0.5f);
+				}
+				// black keys: after C D F G A of each octave (not after E, B or the top C)
+				for (int w = 0; w < 21; ++w) {
+					const int c = w % 7;
+					if (c == 2 || c == 6) {
+						continue;
 					}
+					const int    pitch = base + (w / 7) * 12 + music::keymap::kWhite[c] + 1;
+					const bool   lit = sounding.contains(pitch);
+					const bool   next = nextPitch == pitch;
+					const float  cx = px + (w + 1) * ww - 1.0f * s;
+					const ImVec2 k0(cx - bw * 0.5f, py), k1(cx + bw * 0.5f, py + bh);
+					dl->AddRectFilled(k0, k1, lit ? litCol : IM_COL32(28, 22, 18, 250), 3.0f * s, ImDrawFlags_RoundCornersBottom);
+					dl->AddRect(k0, k1, next ? kGoldCol : IM_COL32(200, 160, 90, 90), 3.0f * s, ImDrawFlags_RoundCornersBottom, next ? 3.0f * s : 1.0f * s);
+					const ImU32 ink = lit ? IM_COL32(40, 28, 16, 255) : kInk;
+					Text(dl, F.sm, { cx, k1.y - 42.0f * s }, ink, fmt::format("S+{}", letterFor(w)), 0.5f);
+					Text(dl, F.sm, { cx, k1.y - 22.0f * s }, lit ? ink : kDim, music::NoteName(pitch), 0.5f);
 				}
 				y += kbH;
 			}
@@ -1188,7 +1204,7 @@ namespace Performance
 			// the keys' help
 			const std::string octave = g_octave == 0 ? "" : fmt::format("   (octave {:+d})", g_octave);
 			Text(dl, F.sm, { p0.x + W * 0.5f, y + 2.0f * s }, kDim,
-				fmt::format("Q-I  A-J  Z-M play  ·  Shift sharp  ·  Up/Down octave  ·  Tab songbook  ·  Esc {}{}", g_act == Act::Free ? "put away" : "stop the song",
+				fmt::format("Z-M  A-J  Q-I play  ·  Shift = black keys (S+Z = C#)  ·  Up/Down octave  ·  Tab songbook  ·  Esc {}{}", g_act == Act::Free ? "put away" : "stop the song",
 					octave),
 				0.5f);
 

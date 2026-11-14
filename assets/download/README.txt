@@ -17,7 +17,8 @@ How to play
         Q W E R T Y U I    high       (I = top C)
         A S D F G H J      middle
         Z X C V B N M      low        (C D E F G A B)
-    Hold Shift for the sharp (the black key above). Up / Down arrows move every row an octave.
+    Hold Shift for the sharp (the black key to the right). The screen shows all 37 as a piano: each white key
+    with its letter, each black key with Shift + letter (S+Z = C#). Up / Down arrows move everything an octave.
   - A MIDI keyboard plugged in before you take out your instrument just works (velocity and the sustain pedal too).
   - Tab opens the songbook (Esc closes it): switch instrument, or pick a song and press Play: it plays itself on
     your instrument, perfectly, with no input (the cheat). Esc stops a song; Esc again puts the instrument away.
