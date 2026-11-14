@@ -12,15 +12,16 @@ Status: **first version, not yet tried in game.**
 - **Take it out:** carry a lute or a flute (the vanilla items, or anything sharing their models: Finn's Lute,
   Pantea's Flute, the Dancer's Flute) and press **O** (`Hotkey`). The player plays the game's bard idle
   (`IdleLuteStart` / `IdleFluteStart`, stopped with `IdlePlayerStop`), the camera goes to third person, the game's
-  music is quietened. **O** again, or **Esc**, puts it away. Not while fighting, swimming, riding or sitting, or with
+  music is quietened. **Esc** puts it away (while you play, the hotkey and every other key are swallowed; Esc is
+  the only way out). Not while fighting, swimming, riding or sitting, or with
   a weapon out; drawing a weapon, a fight, a conversation or leaving the area stops you.
-- **The keyboard:** three rows of seven keys, each an octave of white notes, lowest at the bottom
-  (`Z X C V B N M`, `A S D F G H J`, `Q W E R T Y U`). Shift for sharps, Up/Down to move an octave. The lute's
-  bottom row starts at C3, the flute's at C4. While you play, none of the keyboard reaches the game; the mouse
+- **The keyboard:** 37 notes, like a 37-key keyboard: three rows of seven keys, each an octave of white notes,
+  lowest at the bottom (`Z X C V B N M`, `A S D F G H J`, `Q W E R T Y U`), and `I` for the top C. Shift for
+  sharps, Up/Down to move an octave. The lute runs C3-C6, the flute C4-C7. While you play, none of the keyboard reaches the game; the mouse
   still turns the camera.
 - **A MIDI keyboard:** every MIDI input Windows knows is opened while you play (and closed after), with velocity,
   the sustain pedal and all-notes-off. Its notes sound straight from the driver's thread, not on the next frame.
-- **The songbook** (**Tab**): switch instrument, go back to free play, or pick a song: five built-in public-domain
+- **The songbook** (**Tab**, **Esc** to close): switch instrument, go back to free play, or pick a song: five built-in public-domain
   tunes (Ode to Joy, Amazing Grace, Scarborough Fair, Drunken Sailor, Greensleeves) and every `.mid` in
   `Data\SKSE\Plugins\SkyrimSongs\Songs`.
   - **Play along:** after a three-tick count-in the tune slides along three lanes (the keyboard's rows) to a line,

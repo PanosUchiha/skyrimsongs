@@ -432,7 +432,7 @@ namespace Performance
 		{
 			BackToFree();
 			g_song = a_song;
-			g_songShift = music::FitOctaves(g_song.melody, Base(), 35);
+			g_songShift = music::FitOctaves(g_song.melody, Base(), 36);
 			std::vector<music::Note> chart = g_song.melody;
 			for (auto& n : chart) {
 				n.pitch += g_songShift;
@@ -449,7 +449,7 @@ namespace Performance
 		{
 			BackToFree();
 			g_song = a_song;
-			g_songShift = music::FitOctaves(g_song.melody, g_inst == Instrument::Lute ? 48 : 60, 35);
+			g_songShift = music::FitOctaves(g_song.melody, g_inst == Instrument::Lute ? 48 : 60, 36);
 			auto notes = g_song.all;
 			for (auto& n : notes) {
 				n.pitch += g_songShift;
@@ -1044,15 +1044,17 @@ namespace Performance
 				for (int r = 2; r >= 0; --r) {
 					const float ry = y + (2 - r) * (keyH + keyGap) + 4.0f * s;
 					const float rx = p0.x + (W - rowW) * 0.5f + (2 - r) * kw * 0.18f;  // staggered like a real keyboard
-					for (int c = 0; c < 7; ++c) {
-						const int    pitch = base + r * 12 + music::keymap::kWhite[c];
+					// the top row has an eighth key, I: the top C (37 notes in all)
+					for (int c = 0; c < (r == 2 ? 8 : 7); ++c) {
+						const bool   topC = c == 7;
+						const int    pitch = topC ? base + 36 : base + r * 12 + music::keymap::kWhite[c];
 						const bool   lit = sounding.contains(pitch);
-						const bool   sharpLit = sounding.contains(pitch + 1) && c != 2 && c != 6;
-						const bool   next = nextPitch == pitch || (nextPitch == pitch + 1 && c != 2 && c != 6);
+						const bool   sharpLit = !topC && sounding.contains(pitch + 1) && c != 2 && c != 6;
+						const bool   next = nextPitch == pitch || (!topC && nextPitch == pitch + 1 && c != 2 && c != 6);
 						const ImVec2 k0(rx + c * (kw + keyGap), ry), k1(k0.x + kw, ry + keyH);
 						dl->AddRectFilled(k0, k1, lit ? IM_COL32(230, 190, 105, 235) : sharpLit ? IM_COL32(170, 130, 70, 235) : IM_COL32(48, 40, 32, 230), 5.0f * s);
 						dl->AddRect(k0, k1, next ? kGoldCol : IM_COL32(200, 160, 90, 70), 5.0f * s, 0, next ? 2.5f * s : 1.0f * s);
-						Text(dl, F.key, { k0.x + 7.0f * s, k0.y + 3.0f * s }, lit ? IM_COL32(30, 20, 10, 255) : kInk, std::string(1, music::keymap::kLetters[r][c]));
+						Text(dl, F.key, { k0.x + 7.0f * s, k0.y + 3.0f * s }, lit ? IM_COL32(30, 20, 10, 255) : kInk, std::string(1, topC ? 'I' : music::keymap::kLetters[r][c]));
 						Text(dl, F.sm, { k1.x - 6.0f * s, k1.y - 19.0f * s }, lit ? IM_COL32(50, 35, 20, 255) : kDim, music::NoteName(sharpLit ? pitch + 1 : pitch),
 							1.0f);
 					}
@@ -1063,7 +1065,7 @@ namespace Performance
 			// the keys' help
 			const std::string octave = g_octave == 0 ? "" : fmt::format("   (octave {:+d})", g_octave);
 			Text(dl, F.sm, { p0.x + W * 0.5f, y + 2.0f * s }, kDim,
-				fmt::format("Q-U  A-J  Z-M play  ·  Shift sharp  ·  Up/Down octave  ·  Tab songbook  ·  Esc {}{}", g_act == Act::Free ? "put away" : "stop the song",
+				fmt::format("Q-I  A-J  Z-M play  ·  Shift sharp  ·  Up/Down octave  ·  Tab songbook  ·  Esc {}{}", g_act == Act::Free ? "put away" : "stop the song",
 					octave),
 				0.5f);
 
@@ -1228,7 +1230,7 @@ namespace Performance
 				Stop("put away from the songbook");
 			}
 			ImGui::SameLine();
-			ImGui::TextDisabled("  Tab or Esc: back to playing");
+			ImGui::TextDisabled("  Esc: back to playing");
 			ImGui::End();
 		}
 	}
@@ -1318,7 +1320,7 @@ namespace Performance
 		}
 		const auto mode = Overlay::GetMode();
 		if (mode == Overlay::Mode::Book) {
-			if (a_down && (a_scan == 0x01 || a_scan == 0x0F)) {
+			if (a_down && a_scan == 0x01) {  // only Esc leaves the songbook
 				Overlay::SetMode(Overlay::Mode::Playing);
 			}
 			return;
@@ -1342,11 +1344,7 @@ namespace Performance
 			}
 			return;
 		}
-		// the rest (key down)
-		if (a_scan == Config::Get().hotkey) {
-			Stop("hotkey");
-			return;
-		}
+		// the rest (key down). While you play, the hotkey and every other key is swallowed: only Esc gets you out.
 		switch (a_scan) {
 		case 0x01:  // Esc: stop the song, or put the instrument away
 			if (g_act != Act::Free) {

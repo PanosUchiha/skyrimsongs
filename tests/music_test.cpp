@@ -148,7 +148,7 @@ namespace
 			}
 			// every tune fits the lute's and the flute's three rows
 			for (int base : { 48, 60 }) {
-				const int shift = FitOctaves(s.melody, base, 35);
+				const int shift = FitOctaves(s.melody, base, 36);
 				int       out = 0;
 				for (const auto& n : s.melody) {
 					keymap::Label l;
@@ -170,14 +170,20 @@ namespace
 		CHECK(keymap::Pitch(0x16, 48, false) == 83);   // U = B5
 		CHECK(keymap::Pitch(0x1F, 48, true) == 63);    // Shift+S = D#4
 		CHECK(keymap::Pitch(0x18, 48, false) == -1);   // O (the hotkey): not a note
-		for (int p = 48; p < 84; ++p) {
+		CHECK(keymap::Pitch(0x17, 48, false) == 84);   // I = C6, the top C
+		// all 37 notes have a key
+		int notes = 0;
+		for (int p = 48; p <= 84; ++p) {
 			keymap::Label l;
 			CHECK(keymap::LabelFor(p, 48, l));
-			CHECK(keymap::Pitch(keymap::kRows[l.row][l.col], 48, l.shift) == p);
+			const int scan = l.col == 7 ? keymap::kTopC : keymap::kRows[l.row][l.col];
+			CHECK(keymap::Pitch(scan, 48, l.shift) == p);
+			++notes;
 		}
+		CHECK(notes == keymap::kNotes);
 		keymap::Label l;
 		CHECK(!keymap::LabelFor(47, 48, l));
-		CHECK(!keymap::LabelFor(84 + 1, 48, l));
+		CHECK(!keymap::LabelFor(85, 48, l));
 	}
 
 	double FreeQuality(const std::vector<std::pair<double, int>>& a_notes, double a_now)

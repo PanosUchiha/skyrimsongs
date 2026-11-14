@@ -3,9 +3,10 @@
 #pragma once
 
 // The computer keyboard as an instrument: three rows of seven keys, each row an octave of the white notes
-// (C D E F G A B), the bottom row lowest. Hold Shift for the note a semitone up (the black keys).
+// (C D E F G A B), the bottom row lowest, and I for the C on top. Hold Shift for the note a semitone up (the
+// black keys). 37 notes: three full octaves and the top C, like a 37-key keyboard.
 //
-//   Q W E R T Y U    high octave   (base + 24)
+//   Q W E R T Y U I  high octave   (base + 24), I = base + 36
 //   A S D F G H J    middle octave (base + 12)
 //   Z X C V B N M    low octave    (base)
 //
@@ -23,6 +24,8 @@ namespace music::keymap
 		{ 'Q', 'W', 'E', 'R', 'T', 'Y', 'U' },
 	};
 	inline constexpr int kWhite[7] = { 0, 2, 4, 5, 7, 9, 11 };
+	inline constexpr int kTopC = 0x17;  // I: the top C
+	inline constexpr int kNotes = 37;   // base .. base + 36
 	inline constexpr int kLeftShift = 0x2A, kRightShift = 0x36;
 
 	// The key's row and column, or false if it isn't a note key
@@ -43,6 +46,9 @@ namespace music::keymap
 	// The pitch a key plays, or -1
 	inline int Pitch(int a_scan, int a_base, bool a_shift)
 	{
+		if (a_scan == kTopC) {
+			return a_base + 36;  // nothing above it
+		}
 		int r = 0, c = 0;
 		if (!Find(a_scan, r, c)) {
 			return -1;
@@ -50,24 +56,25 @@ namespace music::keymap
 		return a_base + r * 12 + kWhite[c] + (a_shift ? 1 : 0);
 	}
 
-	// Which key plays a pitch: false if it's outside the three rows. Sharps (and E#/B#, which don't exist on the
-	// keyboard) are the white key below with Shift.
+	// Which key plays a pitch: false if it's outside the 37 notes. Sharps are the white key below with Shift; the
+	// top C is I (row 2, column 7).
 	struct Label
 	{
-		int  row = 0, col = 0;
+		int  row = 0, col = 0;  // col 7: the top C
 		bool shift = false;
 		char letter = '?';
 	};
 	inline bool LabelFor(int a_pitch, int a_base, Label& a_out)
 	{
 		const int rel = a_pitch - a_base;
-		if (rel < 0 || rel > 3 * 12 - 1 + 1) {
+		if (rel < 0 || rel > 36) {
 			return false;
+		}
+		if (rel == 36) {
+			a_out = { 2, 7, false, 'I' };
+			return true;
 		}
 		int row = rel / 12, pc = rel % 12;
-		if (row > 2) {
-			return false;
-		}
 		int  col = -1;
 		bool shift = false;
 		for (int c = 6; c >= 0; --c) {
