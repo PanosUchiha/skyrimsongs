@@ -108,7 +108,6 @@ namespace Performance
 		bool                                      g_warned = false;
 		bool                                      g_forcedThird = false;
 		std::vector<std::pair<RE::BGSSoundCategory*, float>> g_muted;
-		double                                    g_switchIdleAt = -1.0;
 		int                                       g_midiCount = 0;
 		std::vector<std::string>                  g_midiNames;
 
@@ -168,6 +167,7 @@ namespace Performance
 			RE::BSScript::PackValue(&v, a_self);
 			auto obj = v.GetObject();
 			if (!obj) {
+				spdlog::warn("Papyrus call {}: no script object for {:08X}", a_fn, a_self->GetFormID());
 				return;
 			}
 			auto*                                                    args = RE::MakeFunctionArguments(std::move(a_args)...);
@@ -277,20 +277,58 @@ namespace Performance
 			return false;
 		}
 
-		void PlayIdleFor(Instrument a_i)
+		// The bard idle, played straight through the player's AI process (what Papyrus's PlayIdle does), a moment
+		// after you take the instrument out (the camera has to settle into third person first), retried a few times
+		// if the game refuses it, then through Papyrus as a last try.
+		double g_idleAt = -1.0;
+		int    g_idleTries = 0;
+
+		bool NativeIdle(RE::TESIdleForm* a_idle)
 		{
 			auto* p = Player();
-			auto* idle = g_idles[a_i == Instrument::Lute ? 0 : 1];
-			if (idle) {
-				Call(p, "PlayIdle", idle);
-			} else {
-				spdlog::warn("No {} idle to play", InstName(a_i));
+			if (!p || !a_idle) {
+				return false;
 			}
+			auto* proc = p->GetActorRuntimeData().currentProcess;
+			return proc && proc->PlayIdle(p, a_idle, nullptr);
+		}
+
+		void PlayIdleFor(Instrument a_i, double a_delay = 0.4)
+		{
+			(void)a_i;
+			g_idleAt = Now() + a_delay;
+			g_idleTries = 0;
+		}
+
+		void RunIdle()
+		{
+			auto* idle = g_idles[g_inst == Instrument::Lute ? 0 : 1];
+			if (!idle) {
+				spdlog::warn("No {} idle to play", InstName(g_inst));
+				g_idleAt = -1.0;
+				return;
+			}
+			if (NativeIdle(idle)) {
+				spdlog::info("Playing the {} idle {:08X} (try {})", InstName(g_inst), idle->GetFormID(), g_idleTries + 1);
+				g_idleAt = -1.0;
+				return;
+			}
+			if (++g_idleTries < 5) {
+				g_idleAt = Now() + 0.4;
+				return;
+			}
+			spdlog::warn("The game refused the {} idle {:08X} five times; asking through Papyrus", InstName(g_inst), idle->GetFormID());
+			Call(Player(), "PlayIdle", idle);
+			g_idleAt = -1.0;
 		}
 
 		void StopIdle()
 		{
+			g_idleAt = -1.0;
 			auto* p = Player();
+			if (g_stopIdle && NativeIdle(g_stopIdle)) {
+				return;
+			}
 			if (g_stopIdle) {
 				Call(p, "PlayIdle", g_stopIdle);
 			} else if (p) {
@@ -868,9 +906,8 @@ namespace Performance
 				Stop("a menu opened");
 				return;
 			}
-			if (g_switchIdleAt > 0.0 && now >= g_switchIdleAt) {
-				g_switchIdleAt = -1.0;
-				PlayIdleFor(g_inst);
+			if (g_idleAt > 0.0 && now >= g_idleAt) {
+				RunIdle();
 			}
 			g_midiLive = Overlay::GetMode() == Overlay::Mode::Playing;
 			{
@@ -1241,7 +1278,7 @@ namespace Performance
 					SetInst(inst);
 					g_lastInst = inst;
 					StopIdle();
-					g_switchIdleAt = Now() + 0.7;
+					PlayIdleFor(inst, 0.7);
 				}
 				if (on) {
 					ImGui::PopStyleColor();
