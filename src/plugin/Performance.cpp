@@ -15,6 +15,9 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
 
+#undef GetObject  // Windows.h renames it to GetObjectA, and BSScript::Variable has a GetObject
+#undef small      // and rpcndr.h makes "small" a type
+
 namespace Performance
 {
 	namespace
@@ -886,7 +889,7 @@ namespace Performance
 		struct Fonts
 		{
 			ImFont* body = nullptr;
-			ImFont* small = nullptr;
+			ImFont* sm = nullptr;
 			ImFont* key = nullptr;
 			ImFont* title = nullptr;
 			ImFont* book = nullptr;
@@ -939,7 +942,7 @@ namespace Performance
 				const ImVec2 b0(p0.x + W * 0.60f, y + 11.0f * s);
 				std::string  label = g_crowd.Size() == 0 ? "Nobody's listening" :
 				                                           fmt::format("{} · {} listening", music::Crowd::MoodWord(mood), g_crowd.Size());
-				Text(dl, F.small, { b0.x + bw * 0.5f, y - 8.0f * s }, kDim, label, 0.5f);
+				Text(dl, F.sm, { b0.x + bw * 0.5f, y - 8.0f * s }, kDim, label, 0.5f);
 				dl->AddRectFilled(b0, b0 + ImVec2(bw, bh), IM_COL32(60, 50, 40, 220), 3.0f * s);
 				if (g_crowd.Size() > 0) {
 					const ImU32 c = mood < 0.3 ? kRed : mood < 0.55 ? IM_COL32(220, 200, 140, 255) : kGreen;
@@ -994,7 +997,7 @@ namespace Performance
 				if (songT < 0.0) {
 					Text(dl, F.big, { (x0 + x1) * 0.5f, y + laneH * 0.5f }, kGoldCol, fmt::format("{}", static_cast<int>(std::ceil(-songT))), 0.5f);
 				}
-				Text(dl, F.small, { x1 - 6.0f * s, y + 2.0f * s }, kDim,
+				Text(dl, F.sm, { x1 - 6.0f * s, y + 2.0f * s }, kDim,
 					fmt::format("{:.0f}%   streak {}", g_chart.Score() * 100.0, g_chart.Streak()), 1.0f);
 				y += hwH;
 			} else if (g_act == Act::Auto) {
@@ -1050,7 +1053,7 @@ namespace Performance
 						dl->AddRectFilled(k0, k1, lit ? IM_COL32(230, 190, 105, 235) : sharpLit ? IM_COL32(170, 130, 70, 235) : IM_COL32(48, 40, 32, 230), 5.0f * s);
 						dl->AddRect(k0, k1, next ? kGoldCol : IM_COL32(200, 160, 90, 70), 5.0f * s, 0, next ? 2.5f * s : 1.0f * s);
 						Text(dl, F.key, { k0.x + 7.0f * s, k0.y + 3.0f * s }, lit ? IM_COL32(30, 20, 10, 255) : kInk, std::string(1, music::keymap::kLetters[r][c]));
-						Text(dl, F.small, { k1.x - 6.0f * s, k1.y - 19.0f * s }, lit ? IM_COL32(50, 35, 20, 255) : kDim, music::NoteName(sharpLit ? pitch + 1 : pitch),
+						Text(dl, F.sm, { k1.x - 6.0f * s, k1.y - 19.0f * s }, lit ? IM_COL32(50, 35, 20, 255) : kDim, music::NoteName(sharpLit ? pitch + 1 : pitch),
 							1.0f);
 					}
 				}
@@ -1059,7 +1062,7 @@ namespace Performance
 
 			// the keys' help
 			const std::string octave = g_octave == 0 ? "" : fmt::format("   (octave {:+d})", g_octave);
-			Text(dl, F.small, { p0.x + W * 0.5f, y + 2.0f * s }, kDim,
+			Text(dl, F.sm, { p0.x + W * 0.5f, y + 2.0f * s }, kDim,
 				fmt::format("Q-U  A-J  Z-M play  ·  Shift sharp  ·  Up/Down octave  ·  Tab songbook  ·  Esc {}{}", g_act == Act::Free ? "put away" : "stop the song",
 					octave),
 				0.5f);
@@ -1399,14 +1402,14 @@ namespace Performance
 			return io.Fonts->AddFontFromFileTTF(p.c_str(), a_size * g_ui, &fc);
 		};
 		F.body = load("BarlowCondensed-Medium.ttf", "arialn.ttf", 21.0f);
-		F.small = load("BarlowCondensed-Medium.ttf", "arialn.ttf", 16.0f);
+		F.sm = load("BarlowCondensed-Medium.ttf", "arialn.ttf", 16.0f);
 		F.key = load("BarlowCondensed-SemiBold.ttf", "arialnb.ttf", 22.0f);
 		F.big = load("BarlowCondensed-SemiBold.ttf", "arialnb.ttf", 64.0f);
 		F.title = load("IMFellEnglishSC-Regular.ttf", "georgia.ttf", 34.0f);
 		F.book = load("IMFellEnglish-Regular.ttf", "georgia.ttf", 21.0f);
 		F.bookIt = load("IMFellEnglish-Italic.ttf", "georgiai.ttf", 19.0f);
 		ImFont* any = F.body ? F.body : io.Fonts->AddFontDefault();
-		for (ImFont** f : { &F.body, &F.small, &F.key, &F.big, &F.title, &F.book, &F.bookIt }) {
+		for (ImFont** f : { &F.body, &F.sm, &F.key, &F.big, &F.title, &F.book, &F.bookIt }) {
 			if (!*f) {
 				*f = any;
 			}
