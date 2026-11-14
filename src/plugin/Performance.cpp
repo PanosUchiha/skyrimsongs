@@ -564,16 +564,12 @@ namespace Performance
 		{
 			BackToFree();
 			g_song = a_song;
-			g_songShift = music::FitOctaves(g_song.melody, g_inst == Instrument::Lute ? 36 : 60, 36);
-			auto notes = g_song.all;
-			for (auto& n : notes) {
-				n.pitch += g_songShift;
-			}
-			// everything onto the instrument's 37 keys: a bass line or a high part played outside them doesn't
-			// sound like a lute or a flute any more
-			const std::size_t before = notes.size();
-			notes = music::FoldIntoRange(notes, g_inst == Instrument::Lute ? 36 : 60);
-			spdlog::info("  {} notes moved into the {}'s range, {} doubled ones dropped", before, InstName(g_inst), before - notes.size());
+			// the song as written, every note from C2 to A7 (like a sequencer's piano roll); anything beyond is
+			// moved by octaves into it
+			g_songShift = 0;
+			const std::size_t before = g_song.all.size();
+			auto notes = music::FoldIntoRange(g_song.all);
+			spdlog::info("  {} notes, {} doubled ones dropped after folding into C2-A7", before, before - notes.size());
 			g_song.all = notes;
 			g_act = Act::Auto;
 			Audio::PlaySong(notes, g_inst, 1.0f, 1.0, true);

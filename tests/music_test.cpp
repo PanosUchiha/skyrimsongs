@@ -160,7 +160,7 @@ namespace
 		// folding a wide arrangement onto the 37 keys
 		{
 			std::vector<Note> wide = { { 0.0, 1.0, 24, 90, 0, 0 }, { 0.0, 1.0, 36, 90, 0, 0 }, { 0.5, 1.0, 100, 90, 0, 0 }, { 1.0, 1.0, 60, 90, 0, 0 } };
-			const auto        f = FoldIntoRange(wide, 36);
+			const auto        f = FoldIntoRange(wide, 36, 72);
 			CHECK(f.size() == 3);  // the 24 folds onto the 36 already there
 			for (const auto& x : f) {
 				CHECK(x.pitch >= 36 && x.pitch <= 72);

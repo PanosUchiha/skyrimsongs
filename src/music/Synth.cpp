@@ -17,13 +17,13 @@ namespace music
 		// 0 at the instrument's lowest key, 1 at its highest (37 keys: lute C2-C5, flute C4-C7)
 		float Register(int a_pitch, int a_low) { return std::clamp((a_pitch - a_low) / 36.0f, 0.0f, 1.0f); }
 
-		// loudness by key (dB, every 6 semitones from the lowest key and beyond), measured with
-		// tests/voicing so every key of both instruments comes out about as loud as the others
-		constexpr float kLuteNorm[] = { -2.9f, -2.9f, -2.8f, -2.6f, -2.7f, 0.7f, 1.4f, 3.1f, 4.0f, 3.0f, 3.0f };
-		constexpr float kFluteNorm[] = { 2.3f, 2.3f, 2.0f, 1.6f, 1.1f, 0.5f, -0.4f, -2.0f, -3.5f, -3.9f, -3.9f };
-		float NormDb(const float* a_table, int a_pitch, int a_low)
+		// loudness by key (dB at MIDI notes 24, 30, 36 ... 108), measured with tests/voicing so every note a song
+		// can play (C2-A7, the range of the songbook) comes out about as loud as the others
+		constexpr float kLuteNorm[] = { -5.6f, -5.6f, -5.5f, -5.2f, -5.5f, -1.9f, -1.4f, 0.3f, 1.6f, 1.9f, 3.5f, 6.7f, 9.1f, 10.2f, 17.2f };
+		constexpr float kFluteNorm[] = { 4.5f, 4.5f, 3.9f, 3.0f, 2.4f, 2.1f, 1.9f, 1.4f, 0.9f, 0.3f, -0.5f, -2.1f, -3.7f, -4.3f, -4.5f };
+		float NormDb(const float* a_table, int a_pitch)
 		{
-			const float x = std::clamp((a_pitch - a_low + 12) / 6.0f, 0.0f, 9.999f);  // the table starts an octave below
+			const float x = std::clamp((a_pitch - 24) / 6.0f, 0.0f, 13.999f);
 			const int   i = static_cast<int>(x);
 			return a_table[i] + (a_table[i + 1] - a_table[i]) * (x - i);
 		}
@@ -153,7 +153,7 @@ namespace music
 	{
 		a_v.t60 = a_t60;
 		for (int k = 0; k < 2; ++k) {
-			const float f = m_rate / (a_v.s[k].len + 0.5f + 0.5f);  // near enough for the decay
+			const float f = m_rate / (a_v.s[k].len + a_v.s[k].damp + 0.5f);  // near enough for the decay
 			a_v.s[k].gain = static_cast<float>(std::pow(10.0, -3.0 / (static_cast<double>(a_t60) * f)));
 		}
 	}
@@ -174,7 +174,10 @@ namespace music
 		for (int k = 0; k < 2; ++k) {
 			auto&        s = a_v.s[k];
 			const double f = a_v.freq * (k == 0 ? 1.0 : ratio2);
-			const double d = std::clamp(m_rate / f - 0.5, 2.2, static_cast<double>(kMaxDelay - 2));
+			// the loop filter (1-damp, damp) delays by damp samples and loses highs every trip round: high strings go
+			// round thousands of times a second, so they get a lighter one or they'd die almost at once
+			s.damp = static_cast<float>(std::clamp(0.5 - 0.4 * (f - 500.0) / 2500.0, 0.1, 0.5));
+			const double d = std::clamp(m_rate / f - s.damp, 2.2, static_cast<double>(kMaxDelay - 2));
 			s.len = static_cast<int>(d - 0.1);
 			const double frac = d - s.len;
 			s.apC = static_cast<float>((1.0 - frac) / (1.0 + frac));
@@ -219,7 +222,7 @@ namespace music
 		// bass rings long, treble short
 		const float t60 = std::clamp(7.0f * std::pow(65.4f / a_v.freq, 0.45f), 1.2f, 8.0f) * (0.8f + 0.2f * a_vel);
 		SetLuteDecay(a_v, t60);
-		a_v.norm = std::pow(10.0f, NormDb(kLuteNorm, a_pitch, kLuteLow) / 20.0f);
+		a_v.norm = std::pow(10.0f, NormDb(kLuteNorm, a_pitch) / 20.0f);
 	}
 
 	void Synth::Apply(const Event& e)
@@ -248,7 +251,7 @@ namespace music
 							v.pitch = e.pitch;
 							v.targetFreq = PitchHz(e.pitch);
 							v.vel = e.value;
-							v.norm = std::pow(10.0f, NormDb(kFluteNorm, e.pitch, kFluteLow) / 20.0f);
+							v.norm = std::pow(10.0f, NormDb(kFluteNorm, e.pitch) / 20.0f);
 							v.held = true;
 							v.chiff = (std::max)(v.chiff, 0.18f * e.value);
 							return;
@@ -263,7 +266,7 @@ namespace music
 				v->held = true;
 				v->curFreq = v->targetFreq = PitchHz(e.pitch);
 				v->chiff = 0.5f * e.value * (1.0f - 0.5f * Register(e.pitch, kFluteLow));
-				v->norm = std::pow(10.0f, NormDb(kFluteNorm, e.pitch, kFluteLow) / 20.0f);
+				v->norm = std::pow(10.0f, NormDb(kFluteNorm, e.pitch) / 20.0f);
 				v->phase = 0.0;
 			}
 			break;
@@ -275,7 +278,7 @@ namespace music
 						if (!m_fluteHeld.empty()) {
 							v.pitch = m_fluteHeld.back();
 							v.targetFreq = PitchHz(v.pitch);
-							v.norm = std::pow(10.0f, NormDb(kFluteNorm, v.pitch, kFluteLow) / 20.0f);
+							v.norm = std::pow(10.0f, NormDb(kFluteNorm, v.pitch) / 20.0f);
 						} else {
 							v.held = false;
 							v.released = !m_sustain;
@@ -347,7 +350,7 @@ namespace music
 		for (int k = 0; k < 2; ++k) {
 			auto&       s = v.s[k];
 			const float y = s.buf[s.idx];
-			const float lp = 0.5f * (y + s.prev);
+			const float lp = (1.0f - s.damp) * y + s.damp * s.prev;
 			s.prev = y;
 			const float ap = s.apC * lp + s.apX - s.apC * s.apY;
 			s.apX = lp;
@@ -492,7 +495,7 @@ namespace music
 			for (auto& b : m_body) {
 				body += b.Run(dc);
 			}
-			body = m_tone.Run(body) * 2.4f;
+			body = m_tone.Run(body) * 3.2f;
 			const float dry = body + flute * 0.8f + coin;
 			const float wet = Reverb(dry) * m_wet;
 			a_out[i] = std::tanh((dry + wet) * m_volume * 0.7f);

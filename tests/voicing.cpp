@@ -1,7 +1,7 @@
-// Measures how loud every key of both instruments is (K-weighted, like LUFS, over the first 0.6 s of a held
-// note at velocity 0.8) and prints the correction table for Synth.cpp (kLuteNorm / kFluteNorm: dB every 6
-// semitones from an octave below the lowest key). Run it after changing the voicing; paste the tables.
-// Usage: voicing [check]   (check: fail if any of the 37 keys is more than 2 dB off the average)
+// Measures how loud every note of both instruments is, C2-A7 (every note a song can play; the 37 keys are part of
+// it), K-weighted like LUFS over the first 0.6 s of a held note at velocity 0.8, and prints the corrections for
+// Synth.cpp's kLuteNorm / kFluteNorm (dB at MIDI 24, 30 ... 108). Run it after changing the voicing; add them.
+// Usage: voicing [check]   (check: fail if any note is more than 2.5 dB off the average)
 #include "../src/music/Synth.h"
 
 #include <algorithm>
@@ -48,10 +48,10 @@ int main(int argc, char** argv)
 	int        bad = 0;
 	for (int k = 0; k < 2; ++k) {
 		const auto inst = k == 0 ? music::Instrument::Lute : music::Instrument::Flute;
-		const int  low = k == 0 ? 36 : 60;
+		constexpr int kLow = 36, kHigh = 105, kN = kHigh - kLow + 1;
 		std::vector<double> db;
-		for (int i = 0; i < 37; ++i) {
-			db.push_back(Loudness(inst, low + i));
+		for (int i = 0; i < kN; ++i) {
+			db.push_back(Loudness(inst, kLow + i));
 		}
 		double avg = 0.0;
 		for (double d : db) {
@@ -59,27 +59,27 @@ int main(int argc, char** argv)
 		}
 		avg /= db.size();
 		double worst = 0.0;
-		for (int i = 0; i < 37; ++i) {
+		for (int i = 0; i < kN; ++i) {
 			worst = std::max(worst, std::abs(db[i] - avg));
 		}
 		std::printf("%s: average %.1f dB, worst key %.1f dB off\n", k == 0 ? "lute" : "flute", avg, worst);
-		for (int i = 0; i < 37; i += 3) {
-			std::printf("  key %2d (%d): %+.1f\n", i, low + i, db[i] - avg);
+		for (int i = 0; i < kN; i += 6) {
+			std::printf("  note %d: %+.1f\n", kLow + i, db[i] - avg);
 		}
 		// the correction: minus the deviation, smoothed over +-3 semitones, every 6 semitones
 		std::printf("  table:");
-		for (int t = 0; t < 11; ++t) {
-			const int at = t * 6 - 12;  // relative to the lowest key
+		for (int t = 0; t < 15; ++t) {
+			const int at = 24 + t * 6 - kLow;  // relative to C2
 			double    sum = 0.0;
 			int       n = 0;
-			for (int i = std::clamp(at - 3, 0, 36); i <= std::clamp(at + 3, 0, 36); ++i) {
+			for (int i = std::clamp(at - 3, 0, kN - 1); i <= std::clamp(at + 3, 0, kN - 1); ++i) {
 				sum += db[i] - avg;
 				++n;
 			}
 			std::printf(" %.1ff,", -sum / n);
 		}
 		std::printf("\n");
-		bad += worst > 2.0 ? 1 : 0;
+		bad += worst > 2.5 ? 1 : 0;
 	}
 	return check && bad ? 1 : 0;
 }

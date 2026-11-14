@@ -65,6 +65,7 @@ namespace music
 			std::array<float, kMaxDelay> buf{};
 			int   len = 0, idx = 0;
 			float apC = 0.0f, apX = 0.0f, apY = 0.0f, prev = 0.0f;
+			float damp = 0.5f;  // the loop filter's weight on the previous sample: lighter for high notes, which would die at once
 			float gain = 0.999f, amp = 1.0f;
 		};
 

@@ -2,7 +2,7 @@
 //   build/preview_lute.wav   Greensleeves on the lute
 //   build/preview_flute.wav  Amazing Grace on the flute
 //   build/preview_tip.wav    a patron's coin
-// Usage: render_preview <out dir>
+// Usage: render_preview <out dir> [song.mid ...]   (each .mid also rendered on both instruments, as "Play" does)
 #include "../src/music/Songs.h"
 #include "../src/music/Synth.h"
 
@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -40,7 +41,7 @@ namespace
 		}
 	}
 
-	std::vector<float> Play(music::Instrument a_inst, const std::vector<music::Note>& a_notes, int a_shift, double a_tail)
+	std::vector<float> Play(music::Instrument a_inst, const std::vector<music::Note>& a_notes, int a_shift, double a_tail, bool a_live = true)
 	{
 		constexpr int      kRate = 48000, kBlock = 256;
 		music::Synth       s(static_cast<float>(kRate));
@@ -67,9 +68,9 @@ namespace
 		for (double t = 0.0; t < end + a_tail; t += static_cast<double>(kBlock) / kRate) {
 			while (next < ev.size() && ev[next].t <= t) {
 				if (ev[next].on) {
-					s.NoteOn(a_inst, ev[next].pitch, ev[next].vel, a_inst == music::Instrument::Flute);
+					s.NoteOn(a_inst, ev[next].pitch, ev[next].vel, a_live && a_inst == music::Instrument::Flute);
 				} else {
-					s.NoteOff(a_inst, ev[next].pitch, a_inst == music::Instrument::Flute);
+					s.NoteOff(a_inst, ev[next].pitch, a_live && a_inst == music::Instrument::Flute);
 				}
 				++next;
 			}
@@ -117,6 +118,19 @@ int main(int argc, char** argv)
 		s.Coin(1.0f);
 		s.Render(out.data(), 48000);
 		WriteWav(dir + "/preview_tip.wav", out, 48000);
+	}
+	for (int a = 2; a < argc; ++a) {
+		std::ifstream             f(argv[a], std::ios::binary);
+		std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+		music::Song               song;
+		std::string               err;
+		if (!music::SongFromMidi(bytes, "song", song, &err)) {
+			std::printf("%s: %s\n", argv[a], err.c_str());
+			continue;
+		}
+		const auto notes = music::FoldIntoRange(song.all);
+		WriteWav(dir + "/song" + std::to_string(a - 1) + "_lute.wav", Play(music::Instrument::Lute, notes, 0, 2.0, false), 48000);
+		WriteWav(dir + "/song" + std::to_string(a - 1) + "_flute.wav", Play(music::Instrument::Flute, notes, 0, 2.0, false), 48000);
 	}
 	std::printf("wrote preview_lute.wav, preview_flute.wav and preview_tip.wav to %s\n", dir.c_str());
 	return 0;

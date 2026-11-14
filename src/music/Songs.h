@@ -33,10 +33,11 @@ namespace music
 	// [a_low, a_low + a_span]
 	int FitOctaves(const std::vector<Note>& a_melody, int a_low, int a_span);
 
-	// Every note moved by whole octaves into [a_low, a_low + 36] (the instrument's 37 keys), so a bass line or a
-	// high descant still plays on the instrument instead of far outside its range; notes that then double one
-	// already sounding (the same pitch at the same moment) are dropped.
-	std::vector<Note> FoldIntoRange(const std::vector<Note>& a_notes, int a_low);
+	// The notes a song can play: C2-A7 (MIDI 36-105), like a sequencer's piano roll. Notes outside are moved
+	// by whole octaves into it (a deep bass or a very high part would otherwise sound like neither instrument);
+	// notes that then double one already sounding (the same pitch at the same moment) are dropped.
+	inline constexpr int kSongLow = 36, kSongHigh = 105;
+	std::vector<Note> FoldIntoRange(const std::vector<Note>& a_notes, int a_low = kSongLow, int a_high = kSongHigh);
 
 	std::string NoteName(int a_pitch);  // "C#4"
 }

@@ -169,7 +169,7 @@ namespace music
 		return true;
 	}
 
-	std::vector<Note> FoldIntoRange(const std::vector<Note>& a_notes, int a_low)
+	std::vector<Note> FoldIntoRange(const std::vector<Note>& a_notes, int a_low, int a_high)
 	{
 		std::vector<Note> out;
 		out.reserve(a_notes.size());
@@ -177,7 +177,7 @@ namespace music
 			while (n.pitch < a_low) {
 				n.pitch += 12;
 			}
-			while (n.pitch > a_low + 36) {
+			while (n.pitch > a_high) {
 				n.pitch -= 12;
 			}
 			bool doubled = false;
