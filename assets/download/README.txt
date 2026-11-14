@@ -1,4 +1,4 @@
-SkyrimSongs 0.1.1
+SkyrimSongs 0.1.2
 =================
 
 Play the lute and flute for real, anywhere in Skyrim, with your keyboard or a USB MIDI keyboard. Whoever is in
