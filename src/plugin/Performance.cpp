@@ -119,7 +119,6 @@ namespace Performance
 			std::filesystem::path path;
 			std::filesystem::file_time_type mtime{};
 		};
-		std::vector<Entry> g_builtIn;
 		std::vector<Entry> g_files;
 
 		// saved
@@ -490,13 +489,6 @@ namespace Performance
 		// ------------------------------------------------------------------------------------------ the songbook
 		void LoadSongs()
 		{
-			if (g_builtIn.empty()) {
-				for (auto& s : music::BuiltInSongs()) {
-					Entry e;
-					e.song = std::move(s);
-					g_builtIn.push_back(std::move(e));
-				}
-			}
 			std::error_code ec;
 			std::filesystem::create_directories(kSongDir, ec);
 			std::vector<Entry> found;
@@ -1271,7 +1263,7 @@ namespace Performance
 				}
 				ImGui::TextDisabled("%s", stars.c_str());
 			} else {
-				ImGui::TextDisabled("%zu notes", a_e.song.melody.size());
+				ImGui::TextDisabled("%zu", a_e.song.all.size());
 			}
 			ImGui::TableNextColumn();
 			if (ImGui::Button("Play", ImVec2(110.0f * s, 0))) {
@@ -1338,12 +1330,9 @@ namespace Performance
 			if (ImGui::BeginTable("##list", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
 				ImGui::TableSetupColumn("Song", ImGuiTableColumnFlags_WidthStretch, 3.0f);
 				ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_WidthStretch, 0.8f);
-				ImGui::TableSetupColumn("Difficulty", ImGuiTableColumnFlags_WidthStretch, 0.9f);
+				ImGui::TableSetupColumn("Notes", ImGuiTableColumnFlags_WidthStretch, 0.9f);
 				ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 125.0f * s);
 				int id = 0;
-				for (const auto& e : g_builtIn) {
-					SongRow(e, id++);
-				}
 				for (const auto& e : g_files) {
 					SongRow(e, id++);
 				}
