@@ -386,9 +386,14 @@ namespace music
 		const double p = kTau * v.phase;
 		// the low register is rich in harmonics, the top nearly pure
 		const float lo = 1.0f - reg;
-		const float h2 = 0.05f + 0.33f * lo, h3 = 0.02f + 0.16f * lo, h4 = 0.06f * lo, h5 = 0.03f * lo;
-		const float tone = static_cast<float>(std::sin(p) + h2 * std::sin(2.0 * p + 0.4) + h3 * std::sin(3.0 * p + 1.1) + h4 * std::sin(4.0 * p + 0.3) +
-											  h5 * std::sin(5.0 * p + 2.0));
+		// below the flute's own range (C4) it plays like a big, soft low flute: little fundamental (so no boom),
+		// the tone carried by its harmonics and breath, and quieter
+		const float deep = std::clamp((261.63f - v.curFreq) / (261.63f - 65.41f), 0.0f, 1.0f);
+		const float h1 = 1.0f - 0.7f * deep;
+		const float h2 = 0.05f + 0.33f * lo + 0.3f * deep, h3 = 0.02f + 0.16f * lo + 0.18f * deep, h4 = 0.06f * lo + 0.05f * deep, h5 = 0.03f * lo;
+		const float tone = static_cast<float>(h1 * std::sin(p) + h2 * std::sin(2.0 * p + 0.4) + h3 * std::sin(3.0 * p + 1.1) +
+											  h4 * std::sin(4.0 * p + 0.3) + h5 * std::sin(5.0 * p + 2.0)) *
+		                   (1.0f - 0.3f * deep);
 		const float target = v.released ? 0.0f : (0.55f + 0.45f * v.vel) * (0.85f + 0.3f * reg);
 		const float tau = v.released ? 0.07f : (0.055f - 0.025f * reg);
 		v.env += (target - v.env) * (1.0f - std::exp(static_cast<float>(-dt / tau)));
@@ -399,7 +404,7 @@ namespace music
 		const float hp = n - v.bpLow - 0.9f * v.bpBand;
 		v.bpBand += fc * hp;
 		v.bpLow += fc * v.bpBand;
-		const float breath = 0.04f + 0.14f * lo;
+		const float breath = 0.04f + 0.14f * lo + 0.08f * deep;
 		const float trem = 1.0f + 0.03f * bloom * static_cast<float>(std::sin(kTau * rate * v.age + 0.6));
 		return (tone * v.env * 0.9f * trem + v.bpBand * breath * v.env + n * v.chiff * (0.08f + 0.06f * lo)) * 0.44f * v.norm;  // (0.44: level with the lute)
 	}

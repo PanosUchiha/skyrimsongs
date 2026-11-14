@@ -572,8 +572,7 @@ namespace Performance
 			// moved by octaves into it
 			g_songShift = 0;
 			const std::size_t before = g_song.all.size();
-			// (the flute has no bass: anything below its lowest note, C4, goes up an octave or two)
-			auto notes = music::FoldIntoRange(g_song.all, g_inst == Instrument::Flute ? 60 : music::kSongLow);
+			auto notes = music::FoldIntoRange(g_song.all);
 			spdlog::info("  {} notes, {} doubled ones dropped after folding into the {}'s range", before, before - notes.size(), InstName(g_inst));
 			g_song.all = notes;
 			g_act = Act::Auto;
@@ -641,7 +640,7 @@ namespace Performance
 				break;
 			default:
 				{
-					const bool dance = !g_dance.empty() && std::uniform_int_distribution<int>(0, 1)(g_rng) == 0;
+					const bool dance = !g_dance.empty() && std::uniform_int_distribution<int>(0, 5)(g_rng) == 0;  // a dance now and then
 					const auto& set = dance ? g_dance : (g_enjoy.empty() ? g_applaud : g_enjoy);
 					if (!set.empty()) {
 						NpcIdle(a, PickOf(set));
@@ -649,7 +648,7 @@ namespace Performance
 				}
 				break;
 			}
-			g_nextMove[a_id] = Now() + 6.0 + std::uniform_real_distribution<double>(0.0, 8.0)(g_rng);
+			g_nextMove[a_id] = Now() + 15.0 + std::uniform_real_distribution<double>(0.0, 20.0)(g_rng);
 		}
 
 		void SendAway(const Visitor& a_v)
@@ -733,12 +732,12 @@ namespace Performance
 					continue;
 				}
 				const double mood = g_crowd.MoodOf(id);
-				if (mood > 0.75) {
-					React(id, std::uniform_int_distribution<int>(0, 2)(g_rng) == 0 ? 1 : 3);
+				if (mood > 0.75 && std::uniform_int_distribution<int>(0, 2)(g_rng) == 0) {
+					React(id, std::uniform_int_distribution<int>(0, 1)(g_rng) == 0 ? 1 : 3);
 				} else if (mood >= 0.0 && mood < 0.3 && std::uniform_int_distribution<int>(0, 3)(g_rng) == 0) {
 					React(id, 2);
 				} else {
-					g_nextMove[id] = now + 3.0;
+					g_nextMove[id] = now + 4.0 + std::uniform_real_distribution<double>(0.0, 6.0)(g_rng);
 				}
 			}
 		}
@@ -1504,9 +1503,6 @@ namespace Performance
 					ReleaseAllKeys();
 					BackToFree();
 					SetInst(inst);
-					if (inst == Instrument::Flute && g_octave < 0) {
-						g_octave = 0;  // the flute starts at C4
-					}
 					g_lastInst = inst;
 					// put the old instrument away properly (the put-away animation is what takes it out of the hands;
 					// starting the new idle before it finished left both instruments held), then take out the new one
@@ -1753,8 +1749,8 @@ namespace Performance
 				++g_octave;
 			}
 			break;
-		case 0xD0:  // Down (the flute doesn't go below C4)
-			if (g_octave > (g_inst == Instrument::Flute ? 0 : -2)) {
+		case 0xD0:  // Down
+			if (g_octave > -2) {
 				ReleaseAllKeys();
 				--g_octave;
 			}

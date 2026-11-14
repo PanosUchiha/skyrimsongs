@@ -48,7 +48,7 @@ int main(int argc, char** argv)
 	int        bad = 0;
 	for (int k = 0; k < 2; ++k) {
 		const auto inst = k == 0 ? music::Instrument::Lute : music::Instrument::Flute;
-		// the lute plays C2-A7; the flute's songs are kept to its own range, C4-A7
+		// both play C2-A7; the flute below C4 is deliberately soft (a big low flute), so it is levelled from C4 up
 		const int kLow = k == 0 ? 36 : 60, kHigh = 105, kN = kHigh - kLow + 1;
 		std::vector<double> db;
 		for (int i = 0; i < kN; ++i) {
