@@ -725,7 +725,7 @@ namespace Performance
 			++g_plays[g_song.title];
 			CheerSignature();
 			Audio::PlaySong(notes, g_inst, Config::Get().speed, 1.0, true);
-			Say(fmt::format(simple ? "You play {}, simply." : "You play {}.", g_song.title), kDim);
+			Say(simple ? fmt::format("You play {}, simply.", g_song.title) : fmt::format("You play {}.", g_song.title), kDim);
 			spdlog::info("Let it play: {} ({} notes)", g_song.title, notes.size());
 		}
 
