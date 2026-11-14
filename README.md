@@ -9,10 +9,12 @@ Status: **first version, not yet tried in game.**
 
 ## Playing
 
-- **Take it out:** carry a lute or a flute (the vanilla items, or anything sharing their models: Finn's Lute,
-  Pantea's Flute, the Dancer's Flute) and press **O** (`Hotkey`). The player plays the game's bard idle
-  (`IdleLuteStart` / `IdleFluteStart`, stopped with `IdlePlayerStop`), the camera goes to third person, the game's
-  music is quietened. **Esc** puts it away (while you play, the hotkey and every other key are swallowed; Esc is
+- **Take it out:** carry a lute or a flute (the vanilla items, anything sharing their models such as Finn's Lute,
+  Pantea's Flute or the Dancer's Flute, and any mod's item, misc, weapon or armour, with "lute" or "flute" in its
+  name or model file name) and press **O** (`Hotkey`). The player plays the game's own bard idle, which puts the
+  instrument in their hands (Skyrim.esm `0x96F8D` lute, `0x96F8C` flute, put away with `IdleStop_Loose`
+  `0x10D9EE`, the same ones Skyrim's Got Talent uses); a torch or shield in the left hand is unequipped, the camera
+  goes to third person, and a silent music type is pushed over the game's music. **Esc** puts it away (while you play, the hotkey and every other key are swallowed; Esc is
   the only way out). Not while fighting, swimming, riding or sitting, or with
   a weapon out; drawing a weapon, a fight, a conversation or leaving the area stops you.
 - **The keyboard:** 37 notes, like a 37-key keyboard: three rows of seven keys, each an octave of white notes,

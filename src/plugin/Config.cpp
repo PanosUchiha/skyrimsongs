@@ -108,9 +108,9 @@ namespace Config
 		v.patience = std::clamp(Float("Crowd", "Patience", v.patience), 0.1f, 5.0f);
 		v.throwOut = Bool("Crowd", "ThrowOut", v.throwOut);
 		v.speechXp = std::clamp(Float("Crowd", "SpeechXP", v.speechXp), 0.0f, 10.0f);
-		v.luteIdle = Str("Animation", "LuteIdle", v.luteIdle.c_str());
-		v.fluteIdle = Str("Animation", "FluteIdle", v.fluteIdle.c_str());
-		v.stopIdle = Str("Animation", "StopIdle", v.stopIdle.c_str());
+		v.luteIdle = static_cast<RE::FormID>(Int("Animation", "LuteIdle", 0));
+		v.fluteIdle = static_cast<RE::FormID>(Int("Animation", "FluteIdle", 0));
+		v.stopIdle = static_cast<RE::FormID>(Int("Animation", "StopIdle", 0));
 		v.logInput = Bool("Debug", "LogInput", v.logInput);
 		g_values = v;
 		spdlog::info("Settings: hotkey 0x{:02X}, instrument needed {}, third person {}, volume {:.2f}, range {:.0f}, throw-out {}", v.hotkey,

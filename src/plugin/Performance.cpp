@@ -32,6 +32,11 @@ namespace Performance
 		// the vanilla instruments (and the quest ones, found by sharing their models)
 		constexpr RE::FormID kLutes[] = { 0x000DABAB };
 		constexpr RE::FormID kFlutes[] = { 0x000DABA7, 0x00105177, 0x00105109 };
+		// the game's bard idles (Skyrim.esm): they put the instrument in the hands. Idles' editor IDs aren't kept
+		// in memory, so these are looked up by form ID (the same ones Skyrim's Got Talent plays on the player).
+		constexpr RE::FormID kIdleLute = 0x00096F8D;
+		constexpr RE::FormID kIdleFlute = 0x00096F8C;
+		constexpr RE::FormID kIdleStopLoose = 0x0010D9EE;
 		constexpr std::uint32_t kSaveVersion = 1;
 
 		const char* kSongDir = "Data\\SKSE\\Plugins\\SkyrimSongs\\Songs";
@@ -43,6 +48,8 @@ namespace Performance
 		RE::TESIdleForm*               g_idles[2]{};
 		RE::TESIdleForm*               g_stopIdle = nullptr;
 		std::vector<RE::BGSSoundCategory*> g_musicCats;
+		RE::BGSMusicType*              g_silence = nullptr;  // a music type of nothing but silence, pushed while you play
+		bool                           g_silenced = false;
 
 		// ------------------------------------------------------------------------------------------ state
 		enum class Act
@@ -172,22 +179,84 @@ namespace Performance
 		int         Base() { return (g_inst == Instrument::Lute ? 48 : 60) + g_octave * 12; }  // the bottom row's C
 
 		// ------------------------------------------------------------------------------------------ instruments
-		bool IsInstrument(RE::TESBoundObject& a_obj, int a_k)
+		std::string Lower(const char* a_s)
 		{
-			if (g_instrumentIds[a_k].contains(a_obj.GetFormID())) {
-				return true;
+			std::string s = a_s ? a_s : "";
+			std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+			return s;
+		}
+
+		// "lute" in a name or file name, but not inside "flute" (or "absolute", "resolute"...)
+		bool HasWord(const std::string& a_s, const char* a_word)
+		{
+			for (auto at = a_s.find(a_word); at != std::string::npos; at = a_s.find(a_word, at + 1)) {
+				const bool startOk = at == 0 || !std::isalpha(static_cast<unsigned char>(a_s[at - 1]));
+				if (startOk) {
+					return true;
+				}
 			}
-			if (!a_obj.Is(RE::FormType::Misc)) {
-				return false;
+			return false;
+		}
+
+		// 0 lute, 1 flute, -1 neither. The game's own (by form ID and model), and anything from a mod - misc item,
+		// weapon, armour you wear on your back - with "lute" or "flute" in its name or its model's file name.
+		int InstrumentKind(RE::TESBoundObject& a_obj)
+		{
+			for (int k = 0; k < 2; ++k) {
+				if (g_instrumentIds[k].contains(a_obj.GetFormID())) {
+					return k;
+				}
 			}
-			const auto* model = a_obj.As<RE::TESModel>();
-			const char* path = model ? model->GetModel() : nullptr;
-			if (!path || !*path) {
-				return false;
+			std::string model;
+			if (const auto* m = a_obj.As<RE::TESModel>(); m && m->GetModel()) {
+				model = Lower(m->GetModel());
+				for (int k = 0; k < 2; ++k) {
+					if (g_instrumentModels[k].contains(model)) {
+						return k;
+					}
+				}
+				if (const auto slash = model.find_last_of("\\/"); slash != std::string::npos) {
+					model = model.substr(slash + 1);
+				}
 			}
-			std::string p = path;
-			std::transform(p.begin(), p.end(), p.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-			return g_instrumentModels[a_k].contains(p);
+			const std::string name = Lower(a_obj.GetName());
+			if (HasWord(name, "flute") || HasWord(model, "flute")) {
+				return 1;
+			}
+			if (HasWord(name, "lute") || HasWord(model, "lute")) {
+				return 0;
+			}
+			return -1;
+		}
+
+		bool IsInstrument(RE::TESBoundObject& a_obj, int a_k) { return InstrumentKind(a_obj) == a_k; }
+
+		// what's in the pack that might be meant as an instrument, for the log when nothing is recognised
+		void LogInstrumentLikeItems()
+		{
+			auto* p = Player();
+			if (!p) {
+				return;
+			}
+			int shown = 0;
+			for (const auto& [obj, n] : p->GetInventoryCounts()) {
+				if (!obj || n <= 0) {
+					continue;
+				}
+				const std::string name = Lower(obj->GetName());
+				std::string       model;
+				if (const auto* m = obj->As<RE::TESModel>(); m && m->GetModel()) {
+					model = Lower(m->GetModel());
+				}
+				if (name.find("lute") != std::string::npos || name.find("instrument") != std::string::npos || model.find("lute") != std::string::npos ||
+					model.find("instrument") != std::string::npos || name.find("drum") != std::string::npos) {
+					spdlog::info("  in your pack: {:08X} '{}' type {} model '{}' x{}", obj->GetFormID(), obj->GetName(), static_cast<int>(obj->GetFormType()), model, n);
+					++shown;
+				}
+			}
+			if (!shown) {
+				spdlog::info("  nothing in your pack is named or modelled like a lute or flute");
+			}
 		}
 
 		bool Owns(Instrument a_i)
@@ -214,8 +283,8 @@ namespace Performance
 			auto* idle = g_idles[a_i == Instrument::Lute ? 0 : 1];
 			if (idle) {
 				Call(p, "PlayIdle", idle);
-			} else if (p) {
-				p->NotifyAnimationGraph((a_i == Instrument::Lute ? Config::Get().luteIdle : Config::Get().fluteIdle).c_str());
+			} else {
+				spdlog::warn("No {} idle to play", InstName(a_i));
 			}
 		}
 
@@ -271,6 +340,14 @@ namespace Performance
 		// ------------------------------------------------------------------------------------------ the game's music
 		void MuteMusic(bool a_mute)
 		{
+			// the music: a silent music type on top of the game's (the way Skyrim's Got Talent does it)
+			if (a_mute && Config::Get().muteMusic && g_silence && !g_silenced) {
+				Call(g_silence, "Add");
+				g_silenced = true;
+			} else if (!a_mute && g_silenced) {
+				Call(g_silence, "Remove");
+				g_silenced = false;
+			}
 			if (a_mute) {
 				if (!Config::Get().muteMusic || !g_muted.empty()) {
 					return;
@@ -610,11 +687,14 @@ namespace Performance
 				}
 				return;
 			}
+			auto* p0 = Player();
 			// your instrument: the last one you played, if you still have it
 			RefreshOwned();
 			const bool lute = g_owns[0], flute = g_owns[1];
 			if (!lute && !flute) {
 				Hud("You need a lute or a flute to play.");
+				spdlog::info("No lute or flute recognised in your pack:");
+				LogInstrumentLikeItems();
 				return;
 			}
 			SetInst((g_lastInst == Instrument::Lute ? lute : !flute) ? Instrument::Lute : Instrument::Flute);
@@ -627,6 +707,12 @@ namespace Performance
 			if (auto* cam = RE::PlayerCamera::GetSingleton(); cam && Config::Get().thirdPerson && cam->IsInFirstPerson()) {
 				cam->ForceThirdPerson();
 				g_forcedThird = true;
+			}
+			// both hands are on the instrument: a torch or shield in the left hand goes away (as in Skyrim's Got Talent)
+			if (auto* left = p0->GetEquippedObject(true); left && (left->Is(RE::FormType::Light) || left->Is(RE::FormType::Armor))) {
+				if (auto* bound = left->As<RE::TESBoundObject>()) {
+					RE::ActorEquipManager::GetSingleton()->UnequipObject(p0, bound);
+				}
 			}
 			PlayIdleFor(g_inst);
 			MuteMusic(true);
@@ -1256,20 +1342,25 @@ namespace Performance
 				}
 			}
 		}
-		auto findIdle = [&](const std::string& a_name) -> RE::TESIdleForm* {
-			for (auto* idle : dh->GetFormArray<RE::TESIdleForm>()) {
-				if (idle && idle->formEditorID.c_str() && _stricmp(idle->formEditorID.c_str(), a_name.c_str()) == 0) {
-					return idle;
+		const auto& cfg = Config::Get();
+		g_idles[0] = RE::TESForm::LookupByID<RE::TESIdleForm>(cfg.luteIdle ? cfg.luteIdle : kIdleLute);
+		g_idles[1] = RE::TESForm::LookupByID<RE::TESIdleForm>(cfg.fluteIdle ? cfg.fluteIdle : kIdleFlute);
+		g_stopIdle = RE::TESForm::LookupByID<RE::TESIdleForm>(cfg.stopIdle ? cfg.stopIdle : kIdleStopLoose);
+		// a music type that's only silence: the highest priority one
+		for (auto* m : dh->GetFormArray<RE::BGSMusicType>()) {
+			if (!m || m->tracks.empty()) {
+				continue;
+			}
+			bool silent = true;
+			for (auto* t : m->tracks) {
+				if (!t || t->GetType() != RE::BSIMusicTrack::TrackType::kSilentTrack) {
+					silent = false;
+					break;
 				}
 			}
-			return nullptr;
-		};
-		const auto& cfg = Config::Get();
-		g_idles[0] = findIdle(cfg.luteIdle);
-		g_idles[1] = findIdle(cfg.fluteIdle);
-		g_stopIdle = findIdle(cfg.stopIdle);
-		if (!g_stopIdle) {
-			g_stopIdle = findIdle("IdleStop_Loose");
+			if (silent && (!g_silence || m->priority < g_silence->priority)) {
+				g_silence = m;
+			}
 		}
 		for (auto* c : dh->GetFormArray<RE::BGSSoundCategory>()) {
 			const char* name = c ? c->GetFullName() : nullptr;
@@ -1277,9 +1368,9 @@ namespace Performance
 				g_musicCats.push_back(c);
 			}
 		}
-		spdlog::info("Forms: gold {}, innkeepers {}, lute models {}, flute models {}, idles lute {} flute {} stop {}, music categories {}", g_gold != nullptr,
-			g_innkeepers != nullptr, g_instrumentModels[0].size(), g_instrumentModels[1].size(), g_idles[0] != nullptr, g_idles[1] != nullptr,
-			g_stopIdle != nullptr, g_musicCats.size());
+		spdlog::info("Forms: gold {}, innkeepers {}, lute models {}, flute models {}, idles lute {} flute {} stop {}, music categories {}, silence {:08X}",
+			g_gold != nullptr, g_innkeepers != nullptr, g_instrumentModels[0].size(), g_instrumentModels[1].size(), g_idles[0] != nullptr,
+			g_idles[1] != nullptr, g_stopIdle != nullptr, g_musicCats.size(), g_silence ? g_silence->GetFormID() : 0u);
 		std::lock_guard lk(g_mtx);
 		LoadSongs();
 	}

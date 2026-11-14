@@ -29,10 +29,10 @@ namespace Config
 		bool  throwOut = true;         // a hostile crowd in an inn gets you thrown out (and banned there for the day)
 		float speechXp = 0.5f;         // Speech experience per septim earned
 
-		// Animation (the idles' editor IDs)
-		std::string luteIdle = "IdleLuteStart";
-		std::string fluteIdle = "IdleFluteStart";
-		std::string stopIdle = "IdlePlayerStop";
+		// Animation: the idles' form IDs in Skyrim.esm (0: the game's bard idles, which put the instrument in your hands)
+		RE::FormID luteIdle = 0;
+		RE::FormID fluteIdle = 0;
+		RE::FormID stopIdle = 0;
 
 		// Diagnostics
 		bool logInput = false;
