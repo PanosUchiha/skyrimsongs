@@ -68,6 +68,7 @@ namespace music
 			int           given = 0;
 			double        sinceTip = 0.0;
 			double        sinceShout = 0.0;
+			double        heard = 0.0;  // seconds they've listened to you playing
 		};
 
 		const std::string& Pick(const std::vector<std::string>& a_lines);

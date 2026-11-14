@@ -117,6 +117,7 @@ namespace music
 			p.sinceTip += a_dt;
 			p.sinceShout += a_dt;
 			if (a_playing) {
+				p.heard += a_dt;
 				const double d = a_quality - 0.5;
 				const double k = 0.06 * m_set.patience * (d < 0.0 ? p.taste : 1.0 / p.taste);
 				p.mood += d * k * a_dt;
@@ -125,8 +126,9 @@ namespace music
 			}
 			p.mood = std::clamp(p.mood, 0.0, 1.0);
 
-			if (a_playing && p.mood > 0.58 && p.given < m_set.maxPerListener && p.sinceTip > 6.0) {
-				const double lam = 0.035 * m_set.tipRate * std::pow((p.mood - 0.58) / 0.42, 1.3) * p.purse * (1.0 + a_skill * 0.5);
+			// a tip has to be earned: they've listened a good while (20 s at least) and are really enjoying it
+			if (a_playing && p.mood > 0.7 && p.heard > 20.0 && p.given < m_set.maxPerListener && p.sinceTip > 6.0) {
+				const double lam = 0.012 * m_set.tipRate * std::pow((p.mood - 0.7) / 0.3, 1.5) * p.purse * (1.0 + a_skill * 0.5);
 				if (Rand() < 1.0 - std::exp(-lam * a_dt)) {
 					int gold = static_cast<int>(std::lround((1.0 + Rand() * 4.0) * (0.6 + p.mood) * p.purse * m_set.tipSize * (1.0 + a_skill)));
 					gold = std::clamp(gold, 1, m_set.maxPerListener - p.given);
