@@ -37,6 +37,7 @@ namespace music
 			int   maxPerListener = 40;  // gold one listener gives in one performance at most
 			bool  oneTipEach = false;   // each listener tips once (the plugin: once a day)
 			float patience = 1.0f;      // how quickly a bad set turns them
+			float welcome = 0.0f;       // how newcomers arrive: + warmer (you're known and liked here), - cooler
 		};
 
 		explicit Crowd(std::uint32_t a_seed = 1);

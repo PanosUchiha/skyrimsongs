@@ -140,6 +140,26 @@ namespace Performance
 		// saved
 		std::map<RE::FormID, float> g_bans;  // cell -> the day you were thrown out
 		std::map<RE::FormID, float> g_tipped;  // listener -> the day they last tipped you (once a day each)
+
+		// Your name in each town: how the place thinks of your playing (-1 notorious .. 1 beloved). It grows with
+		// rooms you've pleased, falls with rooms you've emptied (and being thrown out), and fades as the days pass.
+		struct Fame
+		{
+			float value = 0.0f;
+			float day = 0.0f;  // when it was last brought up to date
+		};
+		std::map<RE::FormID, Fame> g_fame;          // a town's location -> your name there
+		RE::FormID                 g_town = 0;      // where you're playing
+		std::string                g_townName;
+		double                     g_moodSum = 0.0, g_heardFor = 0.0;  // the room's mood while you played to it (listener-seconds)
+		bool                       g_thrown = false;
+		// The Bards College's luthier refits your instruments: 0 common, 1 fine, 2 masterwork
+		int g_refit[2]{};
+		int g_tierNow[2]{};  // what Tier() said last (the HUD shows it every frame; the pack is only looked through now and then)
+		// the instrument comes out with the first note (or a song), and goes away again after a while of quiet
+		bool   g_animOn = false;
+		double g_lastNoteAt = 0.0;
+		double g_animOffAt = -10.0;
 		int                         g_totalEarned = 0;
 		int                         g_performances = 0;
 
@@ -293,6 +313,64 @@ namespace Performance
 			return false;
 		}
 
+		float Today() { return RE::Calendar::GetSingleton() ? RE::Calendar::GetSingleton()->GetDaysPassed() : 0.0f; }
+
+		// the town a place belongs to: the location just under its hold (an inn -> Whiterun -> Whiterun Hold)
+		RE::BGSLocation* TownOf(RE::Actor* a_actor)
+		{
+			auto* loc = a_actor ? a_actor->GetCurrentLocation() : nullptr;
+			if (!loc) {
+				return nullptr;
+			}
+			std::vector<RE::BGSLocation*> chain;
+			for (auto* l = loc; l && chain.size() < 12; l = l->parentLoc) {
+				chain.push_back(l);
+			}
+			for (std::size_t i = 1; i < chain.size(); ++i) {
+				if (chain[i]->HasKeywordString("LocTypeHold")) {
+					return chain[i - 1];
+				}
+			}
+			return chain.size() >= 2 ? chain[chain.size() - 2] : chain.back();
+		}
+
+		// your name in a town, faded for the days since (it halves in about three weeks)
+		float FameIn(RE::FormID a_town)
+		{
+			if (!a_town) {
+				return 0.0f;
+			}
+			auto& f = g_fame[a_town];
+			const float today = Today();
+			if (today > f.day) {
+				f.value *= std::pow(0.968f, today - f.day);
+				f.day = today;
+			}
+			return f.value;
+		}
+
+		const char* FameWord(float a_v)
+		{
+			return a_v < -0.6f ? "Notorious" : a_v < -0.25f ? "Disliked" : a_v < 0.1f ? "A stranger" : a_v < 0.35f ? "Heard of" : a_v < 0.65f ? "Admired" : "Beloved";
+		}
+
+		// how fine an instrument is: the College's refit, or a master's own instrument from the College's quests
+		int Tier(Instrument a_i)
+		{
+			const int k = a_i == Instrument::Lute ? 0 : 1;
+			int       t = g_refit[k];
+			if (auto* p = Player()) {
+				const char* own = k == 0 ? "finn's lute" : "pantea's flute";
+				for (const auto& [obj, n] : p->GetInventoryCounts([k](RE::TESBoundObject& a_obj) { return IsInstrument(a_obj, k); })) {
+					if (n > 0 && Lower(obj->GetName()).find(own) != std::string::npos) {
+						t = 2;
+					}
+				}
+			}
+			return t;
+		}
+		const char* TierWord(int a_t) { return a_t >= 2 ? "masterwork " : a_t == 1 ? "fine " : ""; }
+
 		// The bard idle, played straight through the player's AI process (what Papyrus's PlayIdle does), a moment
 		// after you take the instrument out (the camera has to settle into third person first), retried a few times
 		// if the game refuses it, then through Papyrus as a last try.
@@ -337,6 +415,18 @@ namespace Performance
 			spdlog::warn("The game refused the {} idle {:08X} twelve times; asking through Papyrus", InstName(g_inst), idle->GetFormID());
 			Call(Player(), "PlayIdle", idle);
 			g_idleAt = -1.0;
+		}
+
+		// the first note (or a song) brings the instrument out; a while of quiet puts it away (see Tick)
+		void EnsureAnim()
+		{
+			g_lastNoteAt = Now();
+			if (g_animOn) {
+				return;
+			}
+			g_animOn = true;
+			// right after putting it away, let that finish first, or both end up in the hands
+			PlayIdleFor(g_inst, (std::max)(0.05, g_animOffAt + 1.6 - Now()));
 		}
 
 		void StopIdle()
@@ -430,6 +520,7 @@ namespace Performance
 		void Register(int a_pitch, double a_now, double a_songT)
 		{
 			g_lit[a_pitch] = a_now;
+			EnsureAnim();
 			switch (g_act) {
 			case Act::Free:
 				g_free.Note(a_now, a_pitch);
@@ -565,6 +656,7 @@ namespace Performance
 			g_chart.Load(std::move(chart));
 			g_act = Act::Along;
 			g_lastClick = -99.0;
+			EnsureAnim();
 			Audio::PlaySong({}, g_inst, Config::Get().speed, 3.0, false);
 			Say(fmt::format("Play along: {}", g_song.title), kGoldCol);
 			spdlog::info("Play along: {} ({} notes, shifted {} semitones, speed {:.2f})", g_song.title, g_chart.Chart().size(), g_songShift, Config::Get().speed);
@@ -577,11 +669,17 @@ namespace Performance
 			// the song as written, every note from C2 to A7 (like a sequencer's piano roll); anything beyond is
 			// moved by octaves into it
 			g_songShift = 0;
-			const std::size_t before = g_song.all.size();
-			auto notes = music::FoldIntoRange(g_song.all);
+			const bool        simple = Config::Get().simplifySongs;
+			const auto        source = simple ? music::Simplify(g_song) : g_song.all;
+			const std::size_t before = source.size();
+			if (simple) {
+				spdlog::info("  simplified: {} of {} notes (the melody and a bass)", source.size(), g_song.all.size());
+			}
+			auto notes = music::FoldIntoRange(source);
 			spdlog::info("  {} notes, {} doubled ones dropped after folding into the {}'s range", before, before - notes.size(), InstName(g_inst));
 			g_song.all = notes;
 			g_act = Act::Auto;
+			EnsureAnim();
 			Audio::PlaySong(notes, g_inst, Config::Get().speed, 1.0, true);
 			Say(fmt::format("You play {}.", g_song.title), kDim);
 			spdlog::info("Let it play: {} ({} notes)", g_song.title, notes.size());
@@ -1062,6 +1160,59 @@ namespace Performance
 
 		void Stop(const char* a_why);
 
+		constexpr int kRefitFine = 600, kRefitMaster = 2000;
+
+		bool AtTheCollege()
+		{
+			auto* p = Player();
+			auto* cell = p ? p->GetParentCell() : nullptr;
+			const char* cn = cell ? cell->GetFullName() : nullptr;
+			auto*       loc = p ? p->GetCurrentLocation() : nullptr;
+			const char* ln = loc ? loc->GetFullName() : nullptr;
+			return Lower(cn).find("bards college") != std::string::npos || Lower(ln).find("bards college") != std::string::npos;
+		}
+
+		// the room's temper: your settings, your name in this town, and how fine your instrument is
+		void ApplyCrowdSettings()
+		{
+			const auto&            c = Config::Get();
+			const float            f = FameIn(g_town);
+			const int              tier = Tier(g_inst);
+			music::Crowd::Settings cs;
+			cs.tipRate = c.tipRate * (1.0f + 0.4f * f);
+			cs.tipSize = c.tipSize * (1.0f + 0.3f * f) * (1.0f + 0.15f * tier);
+			cs.maxPerListener = c.maxTipPerListener;
+			cs.patience = c.patience * (1.0f - 0.3f * f) * (1.0f - 0.1f * tier);
+			cs.welcome = 0.15f * f + 0.03f * tier;
+			cs.oneTipEach = true;  // and once a day: see g_tipped
+			g_crowd.SetSettings(cs);
+			g_tierNow[0] = Tier(Instrument::Lute);
+			g_tierNow[1] = Tier(Instrument::Flute);
+			if (auto* syn = Audio::Synth()) {
+				syn->SetQuality(Instrument::Lute, g_tierNow[0]);
+				syn->SetQuality(Instrument::Flute, g_tierNow[1]);
+			}
+		}
+
+		// what the town makes of this performance
+		void EndFame()
+		{
+			if (!g_town || (g_heardFor < 20.0 && !g_thrown)) {
+				return;
+			}
+			const float  before = FameIn(g_town);
+			const double avg = g_heardFor > 0.0 ? g_moodSum / g_heardFor : 0.5;
+			const double weight = std::clamp(g_heardFor / 600.0, 0.1, 1.0);  // ten listener-minutes counts in full
+			const double delta = (avg - 0.5) * 0.5 * weight - (g_thrown ? 0.25 : 0.0);
+			auto&        fame = g_fame[g_town];
+			fame.value = static_cast<float>(std::clamp(fame.value + delta, -1.0, 1.0));
+			spdlog::info("Fame in {}: {:.2f} -> {:.2f} (room {:.2f} over {:.0f} listener-s{})", g_townName, before, fame.value, avg, g_heardFor,
+				g_thrown ? ", thrown out" : "");
+			if (std::string_view(FameWord(before)) != FameWord(fame.value)) {
+				Hud(fmt::format("Word gets around {}: you're {} here now.", g_townName, Lower(FameWord(fame.value))));
+			}
+		}
+
 		void Begin()
 		{
 			if (BlockedByUi()) {
@@ -1101,7 +1252,8 @@ namespace Performance
 					RE::ActorEquipManager::GetSingleton()->UnequipObject(p0, bound);
 				}
 			}
-			PlayIdleFor(g_inst);
+			g_animOn = false;  // the instrument comes out with the first note
+			g_lastNoteAt = Now();
 			MuteMusic(true);
 			g_midiCount = MidiIn::Open(&OnMidi);
 			g_midiNames = MidiIn::OpenNames();
@@ -1117,13 +1269,15 @@ namespace Performance
 			}
 			g_free.Reset();
 			g_crowd = music::Crowd(static_cast<std::uint32_t>(g_rng()));
-			music::Crowd::Settings cs;
-			cs.tipRate = Config::Get().tipRate;
-			cs.tipSize = Config::Get().tipSize;
-			cs.maxPerListener = Config::Get().maxTipPerListener;
-			cs.patience = Config::Get().patience;
-			cs.oneTipEach = true;  // and once a day: see g_tipped
-			g_crowd.SetSettings(cs);
+			{
+				auto* town = TownOf(p0);
+				g_town = town ? town->GetFormID() : 0;
+				const char* name = town ? town->GetFullName() : nullptr;
+				g_townName = name && *name ? name : "these parts";
+			}
+			g_moodSum = g_heardFor = 0.0;
+			g_thrown = false;
+			ApplyCrowdSettings();
 			g_names.clear();
 			g_feed.clear();
 			g_earned = 0;
@@ -1139,7 +1293,8 @@ namespace Performance
 					g_midiCount ? fmt::format(" (MIDI: {})", g_midiNames.empty() ? "connected" : g_midiNames.front()) : ""),
 				kInk);
 			Overlay::SetMode(Overlay::Mode::Playing);
-			spdlog::info("Playing the {}: {} listening{}, MIDI devices {}", InstName(g_inst), g_crowd.Size(), g_inInn ? " (an inn)" : "", g_midiCount);
+			spdlog::info("Playing the {}{}: {} listening{}, MIDI devices {}, in {} ({:08X}, fame {:.2f})", TierWord(Tier(g_inst)), InstName(g_inst), g_crowd.Size(),
+				g_inInn ? " (an inn)" : "", g_midiCount, g_townName, g_town, FameIn(g_town));
 		}
 
 		void Stop(const char* a_why)
@@ -1149,6 +1304,7 @@ namespace Performance
 			}
 			g_playing = false;
 			g_midiLive = false;
+			EndFame();
 			SendAllAway();
 			for (auto id : g_lookers) {
 				Call(ActorOf(id), "ClearLookAt");
@@ -1159,7 +1315,10 @@ namespace Performance
 			Audio::StopSong();
 			MidiIn::Close();
 			g_act = Act::Free;
-			StopIdle();
+			if (g_animOn) {
+				StopIdle();
+			}
+			g_animOn = false;
 			if (g_forcedThird) {
 				if (auto* cam = RE::PlayerCamera::GetSingleton()) {
 					cam->ForceFirstPerson();
@@ -1216,6 +1375,7 @@ namespace Performance
 					return RE::BSContainer::ForEachResult::kContinue;
 				});
 			}
+			g_thrown = true;
 			Stop("thrown out");
 			if (dest) {
 				const auto at = dest->GetPosition();
@@ -1266,6 +1426,14 @@ namespace Performance
 			}
 			if (g_idleAt > 0.0 && now >= g_idleAt) {
 				RunIdle();
+			}
+			if (g_act == Act::Auto) {
+				g_lastNoteAt = now;
+			} else if (g_animOn && now - g_lastNoteAt > 8.0) {
+				// a while of quiet: the instrument goes down (the next note brings it up again)
+				StopIdle();
+				g_animOn = false;
+				g_animOffAt = now;
 			}
 			g_midiLive = Overlay::GetMode() == Overlay::Mode::Playing && g_act != Act::Auto;
 			{
@@ -1337,6 +1505,11 @@ namespace Performance
 			std::vector<music::CrowdEvent> ev;
 			g_crowd.Step(dt, g_quality, Speech01(), performing, ev);
 			HandleCrowd(ev);
+			if (performing && g_crowd.Size() > 0) {
+				const double w = dt * (std::min)(5.0, static_cast<double>(g_crowd.Size()));
+				g_moodSum += g_crowd.Mood() * w;
+				g_heardFor += w;
+			}
 
 			// an inn that's turned on you
 			if (g_inInn && Config::Get().throwOut && g_crowd.Size() > 0 && performing) {
@@ -1417,7 +1590,19 @@ namespace Performance
 			// the header: instrument and what you're doing, the room, your earnings
 			float y = p0.y + 8.0f * s;
 			std::string what = g_act == Act::Free ? "Free play" : g_act == Act::Along ? "Playing along: " + g_song.title : "Playing: " + g_song.title;
-			Text(dl, F.book, { p0.x + 16.0f * s, y }, kGoldCol, fmt::format("{}  ·  {}", music::InstrumentName(g_inst), what));
+			{
+				std::string inst = fmt::format("{}{}", TierWord(g_tierNow[g_inst == Instrument::Lute ? 0 : 1]), InstName(g_inst));
+				inst[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(inst[0])));
+				const std::string head = fmt::format("{}  ·  {}", inst, what);
+				Text(dl, F.book, { p0.x + 16.0f * s, y }, kGoldCol, head);
+				if (g_town) {
+					const float       x = p0.x + 16.0f * s + F.book->CalcTextSizeA(F.book->FontSize, FLT_MAX, 0.0f, head.c_str()).x + 14.0f * s;
+					const std::string fame = fmt::format("{}: {}", g_townName, FameWord(FameIn(g_town)));
+					if (x + F.sm->CalcTextSizeA(F.sm->FontSize, FLT_MAX, 0.0f, fame.c_str()).x < p0.x + W * 0.58f) {  // clear of the mood bar
+						Text(dl, F.sm, { x, y + 3.0f * s }, kDim, fame);
+					}
+				}
+			}
 			{
 				const double mood = g_crowd.Mood();
 				const float  bw = 170.0f * s, bh = 8.0f * s;
@@ -1628,8 +1813,12 @@ namespace Performance
 					g_lastInst = inst;
 					// put the old instrument away properly (the put-away animation is what takes it out of the hands;
 					// starting the new idle before it finished left both instruments held), then take out the new one
-					StopIdle();
-					PlayIdleFor(inst, 1.6);
+					if (g_animOn) {
+						StopIdle();
+						PlayIdleFor(inst, 1.6);
+						g_lastNoteAt = Now();
+					}
+					ApplyCrowdSettings();
 					Say(fmt::format("You put away the {} and take out the {}.", InstName(inst == Instrument::Lute ? Instrument::Flute : Instrument::Lute),
 							InstName(inst)),
 						kDim);
@@ -1649,6 +1838,44 @@ namespace Performance
 			}
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip("Play whatever you like. The room judges your rhythm, key and melody.");
+			}
+			// how fine it is, and your name in this town
+			{
+				const int t = g_tierNow[g_inst == Instrument::Lute ? 0 : 1];
+				ImGui::TextDisabled("Your %s: %s", InstName(g_inst), t >= 2 ? "masterwork" : t == 1 ? "fine" : "common");
+				if (g_town) {
+					ImGui::SameLine(0.0f, 30.0f * s);
+					const float f = FameIn(g_town);
+					ImGui::TextDisabled("%s: %s", g_townName.c_str(), FameWord(f));
+					if (ImGui::IsItemHovered()) {
+						ImGui::SetTooltip("Your name here. Please a room and word gets around: newcomers come warmer, tip more and forgive more.\n"
+										  "Empty one (or get thrown out) and it goes the other way. It fades as the days pass.");
+					}
+				}
+				// the Bards College's luthier refits instruments
+				if (AtTheCollege()) {
+					const int k = g_inst == Instrument::Lute ? 0 : 1;
+					if (g_refit[k] < 2 && t < 2) {
+						const int  next = g_refit[k] + 1;
+						const int  price = next == 1 ? kRefitFine : kRefitMaster;
+						const int  have = GoldOf(Player());
+						ImGui::BeginDisabled(have < price);
+						if (ImGui::Button(fmt::format("Have the College refit your {} ({}): {} septims", InstName(g_inst), next == 1 ? "fine" : "masterwork", price).c_str())) {
+							if (auto* p = Player(); p && g_gold) {
+								p->RemoveItem(g_gold, price, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+								g_refit[k] = next;
+								ApplyCrowdSettings();
+								Say(fmt::format("The College's luthier refits your {}. It's {} now.", InstName(g_inst), next == 1 ? "a fine one" : "a masterwork"), kGoldCol);
+								spdlog::info("Refit the {} to tier {} for {} septims", InstName(g_inst), next, price);
+							}
+						}
+						ImGui::EndDisabled();
+						if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+							ImGui::SetTooltip("%s", have < price ? "You can't afford it." :
+							                         "A finer instrument rings fuller and sweeter, and rooms tip more for it and forgive more.");
+						}
+					}
+				}
 			}
 			ImGui::Spacing();
 
@@ -1693,6 +1920,14 @@ namespace Performance
 			ImGui::SameLine(0.0f, 30.0f * s);
 			if (ImGui::Checkbox("Hide the interface (Backspace)", &cfg.hideHud)) {
 				Config::Save();
+			}
+			ImGui::SameLine(0.0f, 30.0f * s);
+			if (ImGui::Checkbox("Simplify songs", &cfg.simplifySongs)) {
+				Config::Save();
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("Busy MIDI files cut down to what one bard could play: the melody, and a bass note where the harmony moves.\n"
+								  "Takes effect the next time you play a song.");
 			}
 			if (g_midiCount > 0) {
 				std::string names;
@@ -2013,6 +2248,19 @@ namespace Performance
 			a_intfc->WriteRecordData(g_totalEarned);
 			a_intfc->WriteRecordData(g_performances);
 		}
+		if (a_intfc->OpenRecord('FAME', kSaveVersion)) {
+			const auto n2 = static_cast<std::uint32_t>(g_fame.size());
+			a_intfc->WriteRecordData(n2);
+			for (const auto& [town, f] : g_fame) {
+				a_intfc->WriteRecordData(town);
+				a_intfc->WriteRecordData(f.value);
+				a_intfc->WriteRecordData(f.day);
+			}
+		}
+		if (a_intfc->OpenRecord('RFIT', kSaveVersion)) {
+			a_intfc->WriteRecordData(g_refit[0]);
+			a_intfc->WriteRecordData(g_refit[1]);
+		}
 	}
 
 	void Load(SKSE::SerializationInterface* a_intfc)
@@ -2020,6 +2268,8 @@ namespace Performance
 		std::lock_guard lk(g_mtx);
 		g_bans.clear();
 		g_tipped.clear();
+		g_fame.clear();
+		g_refit[0] = g_refit[1] = 0;
 		std::uint32_t type = 0, version = 0, length = 0;
 		while (a_intfc->GetNextRecordInfo(type, version, length)) {
 			if (version != kSaveVersion) {
@@ -2062,9 +2312,28 @@ namespace Performance
 			} else if (type == 'STAT') {
 				a_intfc->ReadRecordData(g_totalEarned);
 				a_intfc->ReadRecordData(g_performances);
+			} else if (type == 'FAME') {
+				std::uint32_t n = 0;
+				a_intfc->ReadRecordData(n);
+				for (std::uint32_t i = 0; i < n && i < 10000; ++i) {
+					RE::FormID town = 0, resolved = 0;
+					Fame       f;
+					a_intfc->ReadRecordData(town);
+					a_intfc->ReadRecordData(f.value);
+					a_intfc->ReadRecordData(f.day);
+					if (a_intfc->ResolveFormID(town, resolved)) {
+						g_fame[resolved] = f;
+					}
+				}
+			} else if (type == 'RFIT') {
+				a_intfc->ReadRecordData(g_refit[0]);
+				a_intfc->ReadRecordData(g_refit[1]);
+				g_refit[0] = std::clamp(g_refit[0], 0, 2);
+				g_refit[1] = std::clamp(g_refit[1], 0, 2);
 			}
 		}
-		spdlog::info("Co-save: {} inn ban(s), {} septims earned in {} performance(s)", g_bans.size(), g_totalEarned, g_performances);
+		spdlog::info("Co-save: {} inn ban(s), {} septims earned in {} performance(s), known in {} town(s), refits {}/{}", g_bans.size(), g_totalEarned,
+			g_performances, g_fame.size(), g_refit[0], g_refit[1]);
 	}
 
 	void Revert(SKSE::SerializationInterface*)
@@ -2074,5 +2343,7 @@ namespace Performance
 		g_tipped.clear();
 		g_totalEarned = 0;
 		g_performances = 0;
+		g_fame.clear();
+		g_refit[0] = g_refit[1] = 0;
 	}
 }

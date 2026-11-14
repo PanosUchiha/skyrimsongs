@@ -80,7 +80,7 @@ namespace music
 				Person p{};
 				p.id = id;
 				// newcomers take their cue from the room
-				p.mood = std::clamp((m_people.empty() ? 0.5 : Mood()) * 0.5 + 0.25 + (Rand() - 0.5) * 0.1, 0.2, 0.8);
+				p.mood = std::clamp((m_people.empty() ? 0.5 : Mood()) * 0.5 + 0.25 + (Rand() - 0.5) * 0.1 + m_set.welcome, 0.1, 0.9);
 				p.taste = 0.7 + Rand() * 0.6;
 				p.purse = 0.5 + Rand() * 1.0;
 				p.sinceTip = 4.0 * Rand();

@@ -39,5 +39,9 @@ namespace music
 	inline constexpr int kSongLow = 36, kSongHigh = 105;
 	std::vector<Note> FoldIntoRange(const std::vector<Note>& a_notes, int a_low = kSongLow, int a_high = kSongHigh);
 
+	// A long, busy arrangement cut down to what one bard could play: the melody and, under it, a bass note where
+	// the harmony moves (the lowest note of a chord, no faster than about two a second)
+	std::vector<Note> Simplify(const Song& a_song);
+
 	std::string NoteName(int a_pitch);  // "C#4"
 }

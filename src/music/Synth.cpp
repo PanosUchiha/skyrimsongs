@@ -190,7 +190,7 @@ namespace music
 			}
 			// the pluck: noise, darker for a soft touch and for the bass, with the harmonics a pluck at that point
 			// on the string leaves out (nearer the bridge as the notes go up)
-			const float a = std::clamp((0.12f + 0.55f * a_vel) * (0.55f + 0.7f * reg), 0.05f, 0.95f);
+			const float a = std::clamp((0.12f + 0.55f * a_vel) * (0.55f + 0.7f * reg) * (1.0f + 0.05f * m_quality[0]), 0.05f, 0.95f);
 			float       y1 = 0.0f, y2 = 0.0f;
 			for (int i = 0; i < s.len; ++i) {
 				y1 += a * (Noise() - y1);
@@ -220,7 +220,7 @@ namespace music
 		// the finger's click
 		a_v.chiff = 0.10f * a_vel * (0.6f + 0.6f * reg);
 		// bass rings long, treble short
-		const float t60 = std::clamp(7.0f * std::pow(65.4f / a_v.freq, 0.45f), 1.2f, 8.0f) * (0.8f + 0.2f * a_vel);
+		const float t60 = std::clamp(7.0f * std::pow(65.4f / a_v.freq, 0.45f), 1.2f, 8.0f) * (0.8f + 0.2f * a_vel) * (1.0f + 0.2f * m_quality[0]);
 		SetLuteDecay(a_v, t60);
 		a_v.norm = std::pow(10.0f, NormDb(kLuteNorm, a_pitch) / 20.0f);
 	}
@@ -386,13 +386,15 @@ namespace music
 		const float breath = v.env / (0.55f + 0.45f * (std::max)(v.vel, 0.05f));  // 0..1 of this note's full breath
 
 		// a player is never quite steady: slow random wander (a few Hz) in pitch and loudness
+		const float q = static_cast<float>(m_quality[1]);
+		const float steady = 1.0f - 0.3f * q;  // a finer flute: a steadier tone
 		v.jitP += (Noise() - v.jitP) * 0.0004f;
 		v.jitA += (Noise() - v.jitA) * 0.0006f;
 		const float scoop = 1.0f - 0.012f * std::exp(static_cast<float>(-v.age / 0.06));
 		const float bloom = std::clamp(static_cast<float>((v.age - 0.35) / 0.7), 0.0f, 1.0f);
 		const float rate = 5.2f + 0.5f * reg;
-		const float vib = 0.0045f * bloom * static_cast<float>(std::sin(kTau * rate * v.age));
-		const float f = v.curFreq * scoop * (1.0f + vib + 0.0025f * v.jitP);
+		const float vib = 0.0045f * (1.0f + 0.12f * q) * bloom * static_cast<float>(std::sin(kTau * rate * v.age));
+		const float f = v.curFreq * scoop * (1.0f + vib + 0.0025f * steady * v.jitP);
 		v.phase += f * dt;
 		v.phase -= std::floor(v.phase);
 		const double p = kTau * v.phase;
@@ -400,7 +402,7 @@ namespace music
 		// the tone: harmonics fill in as the breath does (a soft note is nearly pure), the low register richer
 		const float b2 = breath * breath, b3 = b2 * breath;
 		const float h1 = 1.0f - 0.7f * deep;
-		const float h2 = (0.10f + 0.30f * lo + 0.30f * deep) * b2;
+		const float h2 = (0.10f + 0.30f * lo + 0.30f * deep) * b2 * (1.0f + 0.12f * q);
 		const float h3 = (0.04f + 0.14f * lo + 0.18f * deep) * b3;
 		const float h4 = (0.05f * lo + 0.05f * deep) * b3;
 		const float tone = static_cast<float>(h1 * std::sin(p) + h2 * std::sin(2.0 * p + 0.6) + h3 * std::sin(3.0 * p + 1.3) + h4 * std::sin(4.0 * p + 0.2));
@@ -419,12 +421,12 @@ namespace music
 			air += st[1] * (k == 0 ? 1.0f : k == 1 ? 0.6f : 0.35f);
 		}
 		// (no broadband hiss: it read as white noise behind every note)
-		const float airLevel = (0.008f + 0.012f * lo + 0.015f * deep);
+		const float airLevel = (0.008f + 0.012f * lo + 0.015f * deep) * (1.0f - 0.2f * q);
 
 		// the chiff: a puff of air at the start of each note (and lighter on a slur)
 		v.chiff *= std::exp(static_cast<float>(-dt / 0.035));
 
-		const float level = v.env * (1.0f + 0.04f * v.jitA) * (1.0f - 0.3f * deep);
+		const float level = v.env * (1.0f + 0.04f * steady * v.jitA) * (1.0f - 0.3f * deep);
 		const float trem = 1.0f + 0.025f * bloom * static_cast<float>(std::sin(kTau * rate * v.age + 0.6));
 		// the chiff: the same tuned air, briefly louder at the start of a note
 		const float out = tone * level * trem + air * (airLevel * v.env + v.chiff * 0.05f);
@@ -519,8 +521,9 @@ namespace music
 			m_dcX = lute;
 			m_dcY = dc;
 			float body = dc * 0.7f;
+			const float fuller = 1.0f + 0.3f * m_quality[0];  // a finer lute's body sings more
 			for (auto& b : m_body) {
-				body += b.Run(dc);
+				body += b.Run(dc) * fuller;
 			}
 			body = m_tone.Run(body) * 3.2f;
 			// the flute through a gentle high-pass (~160 Hz): a flute has no bass, so nothing boomy gets through

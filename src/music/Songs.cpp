@@ -169,6 +169,52 @@ namespace music
 		return true;
 	}
 
+	std::vector<Note> Simplify(const Song& a_song)
+	{
+		std::vector<Note> melody = a_song.melody;
+		std::sort(melody.begin(), melody.end(), [](const Note& a, const Note& b) { return a.start < b.start; });
+		// the melody's pitch at a moment (the note sounding then, or the next one)
+		auto melodyAt = [&](double t) {
+			auto it = std::lower_bound(melody.begin(), melody.end(), t, [](const Note& n, double v) { return n.start + n.dur < v; });
+			return it == melody.end() ? (melody.empty() ? 127 : melody.back().pitch) : it->pitch;
+		};
+		std::vector<Note> all = a_song.all;
+		std::sort(all.begin(), all.end(), [](const Note& a, const Note& b) { return a.start < b.start; });
+		std::vector<Note> bass;
+		for (std::size_t i = 0; i < all.size();) {
+			// notes struck together (within 40 ms): the lowest is the bass
+			std::size_t j = i;
+			const Note* low = &all[i];
+			while (j < all.size() && all[j].start - all[i].start < 0.04) {
+				if (all[j].pitch < low->pitch) {
+					low = &all[j];
+				}
+				++j;
+			}
+			i = j;
+			if (low->pitch >= 64 || low->pitch > melodyAt(low->start) - 5) {
+				continue;  // no room under the tune
+			}
+			if (!bass.empty()) {
+				const double gap = low->start - bass.back().start;
+				if (gap < 0.25 || (gap < 0.45 && low->pitch == bass.back().pitch)) {
+					continue;
+				}
+			}
+			Note n = *low;
+			n.vel = static_cast<int>(n.vel * 0.85);
+			bass.push_back(n);
+		}
+		for (std::size_t i = 0; i < bass.size(); ++i) {
+			const double next = i + 1 < bass.size() ? bass[i + 1].start : bass[i].start + 2.0;
+			bass[i].dur = std::clamp(bass[i].dur, 0.3, (std::min)(2.0, next - bass[i].start));
+		}
+		std::vector<Note> out = melody;
+		out.insert(out.end(), bass.begin(), bass.end());
+		std::stable_sort(out.begin(), out.end(), [](const Note& a, const Note& b) { return a.start < b.start; });
+		return out;
+	}
+
 	std::vector<Note> FoldIntoRange(const std::vector<Note>& a_notes, int a_low, int a_high)
 	{
 		std::vector<Note> out;

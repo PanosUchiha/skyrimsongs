@@ -167,6 +167,30 @@ namespace
 				CHECK(x.pitch >= 36 && x.pitch <= 72);
 			}
 		}
+		// a busy arrangement cut down: the melody plus a sparse bass under it
+		{
+			Song song;
+			for (int b = 0; b < 16; ++b) {
+				const double t = b * 0.25;
+				song.melody.push_back({ t, 0.25, 72 + (b % 5), 100, 0, 1 });
+				song.all.push_back({ t, 0.25, 72 + (b % 5), 100, 0, 1 });
+				// a chord on every beat: bass and inner voices
+				for (int p : { 40 + (b / 4) * 2, 55, 59, 62 }) {
+					song.all.push_back({ t, 0.25, p, 90, 1, 2 });
+				}
+			}
+			const auto simple = Simplify(song);
+			int        under = 0;
+			for (const auto& x : simple) {
+				under += x.pitch < 64 ? 1 : 0;
+				CHECK(x.pitch == 40 + static_cast<int>(x.start / 1.0) * 2 || x.pitch >= 72);  // only the melody and the bass
+			}
+			CHECK(simple.size() < song.all.size() / 2);
+			CHECK(under >= 4 && under <= 8);  // the bass where it moves, no faster than every 0.25-0.45 s
+			for (std::size_t i = 1; i < simple.size(); ++i) {
+				CHECK(simple[i].start >= simple[i - 1].start);
+			}
+		}
 		std::vector<Note> n;
 		CHECK(!ParseNotation("C4:1 X9:1", 120, n));
 		CHECK(ParseNotation("C4:1 r:1 D#4:.5", 120, n) && n.size() == 2 && n[1].pitch == 63 && std::abs(n[1].start - 1.0) < 1e-9);

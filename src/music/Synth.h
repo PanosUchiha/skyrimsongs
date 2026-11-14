@@ -3,6 +3,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <vector>
@@ -42,6 +43,9 @@ namespace music
 		void Coin(float a_volume);  // a coin landing: a patron's tip
 		void SetVolume(float a_v);
 		void SetReverb(float a_wet);
+		// How fine the instrument is: 0 a common one, 1 fine, 2 masterwork. A better lute rings longer through a
+		// fuller body; a better flute speaks cleaner, steadier, with a sweeter vibrato.
+		void SetQuality(Instrument a_inst, int a_tier) { m_quality[a_inst == Instrument::Lute ? 0 : 1] = a_tier < 0 ? 0 : a_tier > 2 ? 2 : a_tier; }
 
 		// Mono, overwrites a_out. Call from one thread only (the audio thread).
 		void Render(float* a_out, int a_frames);
@@ -121,6 +125,7 @@ namespace music
 		float               m_volume = 0.8f;
 		float               m_wet = 0.16f;
 		int                 m_active = 0;
+		std::atomic<int>    m_quality[2]{ 0, 0 };
 		std::vector<int>    m_fluteHeld;  // live flute keys down, oldest first (the newest sounds)
 
 		// the lute's body: three band-pass resonances and a DC block
