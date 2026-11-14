@@ -8,7 +8,7 @@ namespace Config
 	struct Values
 	{
 		// Playing
-		int   hotkey = 0x25;              // K: take out your instrument / put it away (DirectInput scan code)
+		int   hotkey = 0x18;              // O: take out your instrument / put it away (DirectInput scan code)
 		bool  requireInstrument = true;   // you need a lute or flute in your pack
 		bool  thirdPerson = true;         // switch to third person while you play (and back after)
 		bool  muteMusic = true;           // quiet the game's music while you play

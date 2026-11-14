@@ -169,7 +169,7 @@ namespace
 		CHECK(keymap::Pitch(0x1E, 48, false) == 60);   // A = C4
 		CHECK(keymap::Pitch(0x16, 48, false) == 83);   // U = B5
 		CHECK(keymap::Pitch(0x1F, 48, true) == 63);    // Shift+S = D#4
-		CHECK(keymap::Pitch(0x25, 48, false) == -1);   // K: not a note
+		CHECK(keymap::Pitch(0x18, 48, false) == -1);   // O (the hotkey): not a note
 		for (int p = 48; p < 84; ++p) {
 			keymap::Label l;
 			CHECK(keymap::LabelFor(p, 48, l));

@@ -41,7 +41,7 @@ namespace Config
 				return a_def;
 			}
 			try {
-				return static_cast<int>(std::stol(s, nullptr, 0));  // 0x25 or 37
+				return static_cast<int>(std::stol(s, nullptr, 0));  // 0x18 or 24
 			} catch (...) {
 				return a_def;
 			}

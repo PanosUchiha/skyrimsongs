@@ -10,7 +10,7 @@ every 1.6 release (Steam and GOG). No plugin (.esp) needed.
 
 How to play
   - Carry a lute or a flute (the game's own, the Bards College quest ones too; RequireInstrument = 0 in the INI
-    lets you play without one). Press K to take it out and K again to put it away. Your weapon must be sheathed.
+    lets you play without one). Press O to take it out and O again to put it away. Your weapon must be sheathed.
   - Three rows of keys are three octaves of the white notes, lowest at the bottom:
         Q W E R T Y U      high
         A S D F G H J      middle

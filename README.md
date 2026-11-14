@@ -10,9 +10,9 @@ Status: **first version, not yet tried in game.**
 ## Playing
 
 - **Take it out:** carry a lute or a flute (the vanilla items, or anything sharing their models: Finn's Lute,
-  Pantea's Flute, the Dancer's Flute) and press **K** (`Hotkey`). The player plays the game's bard idle
+  Pantea's Flute, the Dancer's Flute) and press **O** (`Hotkey`). The player plays the game's bard idle
   (`IdleLuteStart` / `IdleFluteStart`, stopped with `IdlePlayerStop`), the camera goes to third person, the game's
-  music is quietened. **K** again, or **Esc**, puts it away. Not while fighting, swimming, riding or sitting, or with
+  music is quietened. **O** again, or **Esc**, puts it away. Not while fighting, swimming, riding or sitting, or with
   a weapon out; drawing a weapon, a fight, a conversation or leaving the area stops you.
 - **The keyboard:** three rows of seven keys, each an octave of white notes, lowest at the bottom
   (`Z X C V B N M`, `A S D F G H J`, `Q W E R T Y U`). Shift for sharps, Up/Down to move an octave. The lute's
