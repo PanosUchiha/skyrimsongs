@@ -109,28 +109,6 @@ namespace music
 		std::lock_guard lk(m_mtx);
 		m_queue.push_back({ Event::Kind::Coin, Instrument::Lute, false, 0, a_volume });
 	}
-	void Synth::SetSamples(Instrument a_inst, std::vector<Sample> a_samples)
-	{
-		std::erase_if(a_samples, [](const Sample& a) { return a.pcm.size() < 4800; });  // a tenth of a second at least
-		std::sort(a_samples.begin(), a_samples.end(), [](const Sample& a, const Sample& b) { return a.root < b.root; });
-		m_samples[static_cast<int>(a_inst)] = std::move(a_samples);
-	}
-
-	int Synth::NearestSample(Instrument a_inst, int a_pitch) const
-	{
-		const auto& set = m_samples[static_cast<int>(a_inst)];
-		int         best = -1, dist = 1 << 30;
-		for (int i = 0; i < static_cast<int>(set.size()); ++i) {
-			// prefer a sample at or a little below the note: retuning up sounds better than down
-			const int d = std::abs(set[i].root - a_pitch) * 2 + (set[i].root > a_pitch ? 1 : 0);
-			if (d < dist) {
-				dist = d;
-				best = i;
-			}
-		}
-		return best;
-	}
-
 	void Synth::SetVolume(float a_v) { m_volume = std::clamp(a_v, 0.0f, 2.0f); }
 	void Synth::SetReverb(float a_wet) { m_wet = std::clamp(a_wet, 0.0f, 1.0f); }
 
@@ -288,11 +266,6 @@ namespace music
 				v->held = true;
 				v->curFreq = v->targetFreq = PitchHz(e.pitch);
 				v->chiff = 0.5f * e.value * (1.0f - 0.5f * Register(e.pitch, kFluteLow));
-				v->smp = NearestSample(Instrument::Flute, e.pitch);
-				v->spos = 0.0;
-				if (v->smp >= 0) {
-					v->env = 1.0f;  // the recording has its own attack
-				}
 				v->norm = std::pow(10.0f, NormDb(kFluteNorm, e.pitch) / 20.0f);
 				v->phase = 0.0;
 			}
@@ -395,46 +368,8 @@ namespace music
 		return out;
 	}
 
-	float Synth::SampleTick(Voice& v)
-	{
-		const auto&  set = m_samples[static_cast<int>(v.inst)];
-		const auto&  d = set[static_cast<std::size_t>(v.smp)].pcm;
-		const double len = static_cast<double>(d.size());
-		const double dt = 1.0 / m_rate;
-		v.age += dt;
-		v.curFreq += (v.targetFreq - v.curFreq) * (1.0f - std::exp(static_cast<float>(-dt / 0.035)));
-		const double ratio = v.curFreq / PitchHz(set[static_cast<std::size_t>(v.smp)].root);
-		// held: loop the steady middle, crossfading round the join
-		const double loopS = len * 0.45, loopE = len * 0.9, span = loopE - loopS;
-		const double xf = (std::min)(0.04 * m_rate, span * 0.4);
-		auto         read = [&](double a_pos) {
-            const auto  i = static_cast<std::size_t>((std::max)(0.0, a_pos));
-            const float t = static_cast<float>(a_pos - static_cast<double>(i));
-            return i + 1 < d.size() ? d[i] * (1.0f - t) + d[i + 1] * t : 0.0f;
-		};
-		float out = read(v.spos);
-		if (!v.released && v.spos > loopE - xf) {
-			const float w = static_cast<float>((v.spos - (loopE - xf)) / xf);
-			out = out * std::sqrt(1.0f - w) + read(v.spos - span) * std::sqrt(w);
-		}
-		v.spos += ratio;
-		if (!v.released && v.spos >= loopE) {
-			v.spos -= span;
-		}
-		if (v.released) {
-			v.env *= std::exp(static_cast<float>(-dt / 0.09));
-		}
-		if (v.spos >= len - 2.0 || (v.released && v.env < 1e-4f)) {
-			v.on = false;
-		}
-		return out * v.env * (0.45f + 0.55f * v.vel) * 1.8f;
-	}
-
 	float Synth::FluteSample(Voice& v)
 	{
-		if (v.smp >= 0) {
-			return SampleTick(v);
-		}
 		const double dt = 1.0 / m_rate;
 		v.age += dt;
 		const float glide = 1.0f - std::exp(static_cast<float>(-dt / 0.035));
