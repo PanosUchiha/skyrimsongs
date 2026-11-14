@@ -78,6 +78,15 @@ namespace music
 		}
 	}
 
+	void Crowd::SetTaste(std::uint32_t a_id, double a_taste)
+	{
+		for (auto& p : m_people) {
+			if (p.id == a_id) {
+				p.taste = a_taste;
+			}
+		}
+	}
+
 	void Crowd::Sync(const std::vector<std::uint32_t>& a_present, const std::vector<std::uint32_t>* a_noTips)
 	{
 		std::erase_if(m_people, [&](const Person& p) { return std::find(a_present.begin(), a_present.end(), p.id) == a_present.end(); });

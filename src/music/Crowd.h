@@ -55,7 +55,8 @@ namespace music
 		void SongEnded(double a_score, double a_skill, std::vector<CrowdEvent>& a_out);
 
 		double Mood() const;  // 0..1 averaged; 0.5 with nobody there
-		void   Lift(double a_by);  // everyone's mood up (or down) at once: a song the room knows and loves
+		void   Lift(double a_by);
+		void   SetTaste(std::uint32_t a_id, double a_taste);  // > 1 harder to please (a teacher), < 1 easier (a student)  // everyone's mood up (or down) at once: a song the room knows and loves
 		std::size_t Size() const { return m_people.size(); }
 		int    Earned() const { return m_earned; }
 		static const char* MoodWord(double a_mood);

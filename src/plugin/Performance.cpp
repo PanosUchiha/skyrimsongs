@@ -371,13 +371,21 @@ namespace Performance
 				const char* own = k == 0 ? "finn's lute" : "pantea's flute";
 				for (const auto& [obj, n] : p->GetInventoryCounts([k](RE::TESBoundObject& a_obj) { return IsInstrument(a_obj, k); })) {
 					if (n > 0 && Lower(obj->GetName()).find(own) != std::string::npos) {
-						t = 2;
+						t = 3;  // the lost instrument itself: a legend
 					}
 				}
 			}
 			return t;
 		}
-		const char* TierWord(int a_t) { return a_t >= 2 ? "masterwork " : a_t == 1 ? "fine " : ""; }
+		const char* TierWord(int a_t) { return a_t >= 3 ? "legendary " : a_t == 2 ? "masterwork " : a_t == 1 ? "fine " : ""; }
+		// "fine lute", "Finn's lute"
+		std::string InstLabel(Instrument a_i, int a_t)
+		{
+			if (a_t >= 3) {
+				return a_i == Instrument::Lute ? "Finn's lute" : "Pantea's flute";
+			}
+			return fmt::format("{}{}", TierWord(a_t), InstName(a_i));
+		}
 
 		// The bard idle, played straight through the player's AI process (what Papyrus's PlayIdle does), a moment
 		// after you take the instrument out (the camera has to settle into third person first), retried a few times
@@ -799,6 +807,71 @@ namespace Performance
 			return a_v[std::uniform_int_distribution<std::size_t>(0, a_v.size() - 1)(g_rng)];
 		}
 
+		// The Bards College, from the game's own quests: a member after Tending the Flames, and the instruments you
+		// brought back (Finn's Lute, Pantea's Flute, Rjorn's Drum)
+		struct College
+		{
+			bool member = false;
+			bool lute = false, flute = false, drum = false;
+			int  Returned() const { return (lute ? 1 : 0) + (flute ? 1 : 0) + (drum ? 1 : 0); }
+		};
+
+		College CollegeStanding()
+		{
+			auto done = [](const char* a_id, std::uint16_t a_stage) {
+				auto* q = RE::TESForm::LookupByEditorID<RE::TESQuest>(a_id);
+				return q && (q->IsCompleted() || (a_stage && q->GetCurrentStageID() >= a_stage));
+			};
+			College c;
+			c.member = done("MS05", 300);
+			c.lute = done("BardsCollegeLute", 0);
+			c.flute = done("BardsCollegeFlute", 0);
+			c.drum = done("BardsCollegeDrum", 0);
+			return c;
+		}
+		College g_college;  // looked up when you take your instrument out
+		bool    g_atCollege = false;   // playing in the College's own hall: students gather, teachers judge
+		int     g_collegeShows = 0;    // performances the College took note of (saved): word from the College goes before you
+		bool    g_recognised = false;  // someone has remarked on the lost instrument you're playing (once a performance)
+		bool IsStudent(const std::string& a_name) { return a_name == "Aia Arria" || a_name == "Illdi" || a_name == "Ataf"; }
+
+		// The College's own people, by name: they say what a teacher would
+		struct Teacher
+		{
+			const char*              name;
+			std::vector<std::string> praise, scold;
+		};
+		const Teacher* TeacherOf(const std::string& a_name)
+		{
+			static const std::vector<Teacher> kTeachers = {
+				{ "Viarmo", { "Splendid! The College could use more like you.", "That's how it's done. Remember that feeling.", "Olaf himself would have stopped to listen." },
+					{ "No, no, no. Again, from the top.", "You embarrass the College with that.", "Have you been practising at all?" } },
+				{ "Inge Six Fingers", { "Hmph. Not bad. There's feeling in it.", "Your fingers know the way. Finally.", "Finn would have smiled at that." },
+					{ "Your fingering's sloppy. Start past four and it shows.", "That's not a lute, that's a hen house.", "Mind your courses, they're buzzing." } },
+				{ "Pantea Ateia", { "Lovely breath. You listened to me.", "Now that is a flute singing.", "Yes! Let it float." },
+					{ "Breathe from the belly, not the chest!", "You're blowing, not playing.", "Mind your embouchure, it's all air." } },
+				{ "Giraud Gemane", { "A fine performance. Worth writing about.", "Now that has a story in it.", "Bravo, bravo." },
+					{ "Even history wouldn't record that.", "Perhaps stick to the written word.", "Hm. Interesting choices." } },
+				{ "Jorn", { "Ha! You'll take my spot at the Festival.", "Now that's a song!", "Play that again tonight!" },
+					{ "Even I've heard better at the Winking Skeever.", "Easy there, you'll wake the dead.", "Rough night?" } },
+				{ "Aia Arria", { "That was beautiful.", "I'd love to learn that one.", "You make it look easy." }, { "Oh. Oh dear.", "Maybe a little softer?", "Was that on purpose?" } },
+				{ "Illdi", { "Oh, that's lovely!", "I hope my piece sounds half as good.", "You have to teach me that!" }, { "Um... was that the classic?", "Inge would have words.", "Oof." } },
+				{ "Ataf", { "Good. Very good.", "Your rhythm is strong.", "That one moves the feet." }, { "Lost the beat there.", "Slower. Feel it first.", "Again, with a steadier hand." } },
+			};
+			for (const auto& t : kTeachers) {
+				if (a_name == t.name) {
+					return &t;
+				}
+			}
+			return nullptr;
+		}
+
+		std::string NameOf(std::uint32_t a_id)
+		{
+			auto it = g_names.find(a_id);
+			return it == g_names.end() ? "Someone" : it->second;
+		}
+
 		void React(RE::FormID a_id, int a_kind)  // 0 tip, 1 cheer/applause, 2 boo, 3 enjoy (dance / drink)
 		{
 			auto* a = ActorOf(a_id);
@@ -915,7 +988,8 @@ namespace Performance
 				if (auto away = g_awayUntil.find(id); away != g_awayUntil.end() && now < away->second) {
 					continue;
 				}
-				if (id == a_keeper || g_crowd.MoodOf(id) < 0.65 ||
+				const double keen = g_atCollege && IsStudent(NameOf(id)) ? 0.5 : 0.65;  // students crowd round
+				if (id == a_keeper || g_crowd.MoodOf(id) < keen ||
 					std::any_of(g_visitors.begin(), g_visitors.end(), [&](const Visitor& v) { return v.id == id; })) {
 					continue;
 				}
@@ -1008,6 +1082,8 @@ namespace Performance
 			}
 		}
 
+		void RemarkOnInstrument(const std::vector<std::uint32_t>& a_present);
+
 		void ScanListeners()
 		{
 			auto* pl = RE::ProcessLists::GetSingleton();
@@ -1065,6 +1141,15 @@ namespace Performance
 			}
 			g_crowd.Sync(ids, &noTips);
 			g_present = ids;
+			for (auto id : ids) {
+				const std::string n = NameOf(id);
+				if (IsStudent(n)) {
+					g_crowd.SetTaste(id, 0.85);  // students are glad of any music
+				} else if (TeacherOf(n)) {
+					g_crowd.SetTaste(id, 1.45);  // their teachers are not
+				}
+			}
+			RemarkOnInstrument(ids);
 			MoveAudience(ids, g_keeper);
 			for (auto id : ids) {
 				if (auto* a = ActorOf(id); a && Seated(a)) {
@@ -1095,66 +1180,6 @@ namespace Performance
 			g_inInn = interior && (g_keeper != 0 || innLoc);
 		}
 
-		// The Bards College, from the game's own quests: a member after Tending the Flames, and the instruments you
-		// brought back (Finn's Lute, Pantea's Flute, Rjorn's Drum)
-		struct College
-		{
-			bool member = false;
-			bool lute = false, flute = false, drum = false;
-			int  Returned() const { return (lute ? 1 : 0) + (flute ? 1 : 0) + (drum ? 1 : 0); }
-		};
-
-		College CollegeStanding()
-		{
-			auto done = [](const char* a_id, std::uint16_t a_stage) {
-				auto* q = RE::TESForm::LookupByEditorID<RE::TESQuest>(a_id);
-				return q && (q->IsCompleted() || (a_stage && q->GetCurrentStageID() >= a_stage));
-			};
-			College c;
-			c.member = done("MS05", 300);
-			c.lute = done("BardsCollegeLute", 0);
-			c.flute = done("BardsCollegeFlute", 0);
-			c.drum = done("BardsCollegeDrum", 0);
-			return c;
-		}
-		College g_college;  // looked up when you take your instrument out
-
-		// The College's own people, by name: they say what a teacher would
-		struct Teacher
-		{
-			const char*              name;
-			std::vector<std::string> praise, scold;
-		};
-		const Teacher* TeacherOf(const std::string& a_name)
-		{
-			static const std::vector<Teacher> kTeachers = {
-				{ "Viarmo", { "Splendid! The College could use more like you.", "That's how it's done. Remember that feeling.", "Olaf himself would have stopped to listen." },
-					{ "No, no, no. Again, from the top.", "You embarrass the College with that.", "Have you been practising at all?" } },
-				{ "Inge Six Fingers", { "Hmph. Not bad. There's feeling in it.", "Your fingers know the way. Finally.", "Finn would have smiled at that." },
-					{ "Your fingering's sloppy. Start past four and it shows.", "That's not a lute, that's a hen house.", "Mind your courses, they're buzzing." } },
-				{ "Pantea Ateia", { "Lovely breath. You listened to me.", "Now that is a flute singing.", "Yes! Let it float." },
-					{ "Breathe from the belly, not the chest!", "You're blowing, not playing.", "Mind your embouchure, it's all air." } },
-				{ "Giraud Gemane", { "A fine performance. Worth writing about.", "Now that has a story in it.", "Bravo, bravo." },
-					{ "Even history wouldn't record that.", "Perhaps stick to the written word.", "Hm. Interesting choices." } },
-				{ "Jorn", { "Ha! You'll take my spot at the Festival.", "Now that's a song!", "Play that again tonight!" },
-					{ "Even I've heard better at the Winking Skeever.", "Easy there, you'll wake the dead.", "Rough night?" } },
-				{ "Aia Arria", { "That was beautiful.", "I'd love to learn that one.", "You make it look easy." }, { "Oh. Oh dear.", "Maybe a little softer?", "Was that on purpose?" } },
-				{ "Illdi", { "Oh, that's lovely!", "I hope my piece sounds half as good.", "You have to teach me that!" }, { "Um... was that the classic?", "Inge would have words.", "Oof." } },
-				{ "Ataf", { "Good. Very good.", "Your rhythm is strong.", "That one moves the feet." }, { "Lost the beat there.", "Slower. Feel it first.", "Again, with a steadier hand." } },
-			};
-			for (const auto& t : kTeachers) {
-				if (a_name == t.name) {
-					return &t;
-				}
-			}
-			return nullptr;
-		}
-
-		std::string NameOf(std::uint32_t a_id)
-		{
-			auto it = g_names.find(a_id);
-			return it == g_names.end() ? "Someone" : it->second;
-		}
 
 		void MarkTipped(RE::FormID a_id)
 		{
@@ -1265,6 +1290,35 @@ namespace Performance
 
 		constexpr int kRefitFine = 600, kRefitMaster = 2000;
 
+		// playing a lost instrument: someone notices, and its owner certainly does
+		void RemarkOnInstrument(const std::vector<std::uint32_t>& a_present)
+		{
+			const int k = g_inst == Instrument::Lute ? 0 : 1;
+			if (g_recognised || g_tierNow[k] < 3 || a_present.empty() || !g_animOn) {
+				return;
+			}
+			const char* owner = k == 0 ? "Inge Six Fingers" : "Pantea Ateia";
+			const bool  returned = k == 0 ? g_college.lute : g_college.flute;
+			for (auto id : a_present) {
+				if (NameOf(id) == owner) {
+					g_recognised = true;
+					const std::string line = k == 0 ? (returned ? "Is that... Finn's Lute? I thought you'd given it back to me!" :
+					                                              "That's Finn's Lute! I'd know those courses anywhere. You'll bring that back to me, you hear?") :
+					                                  (returned ? "My flute? How are you playing my flute?" :
+					                                              "That's my flute! Where did you find it? I want it back!");
+					React(id, 1);
+					Say(fmt::format("{}: \"{}\"", NameOf(id), line), kGoldCol);
+					Hud(fmt::format("{}: \"{}\"", NameOf(id), line));
+					return;
+				}
+			}
+			if (std::uniform_int_distribution<int>(0, 39)(g_rng) == 0) {  // now and then, someone else
+				g_recognised = true;
+				const auto id = a_present[std::uniform_int_distribution<std::size_t>(0, a_present.size() - 1)(g_rng)];
+				Say(fmt::format("{}: \"{}\"", NameOf(id), k == 0 ? "An eight-course lute? That's an old one. A fine old one." : "What a sweet flute that is."), kGreen);
+			}
+		}
+
 		bool AtTheCollege()
 		{
 			auto* p = Player();
@@ -1328,6 +1382,11 @@ namespace Performance
 			cs.maxPerListener = c.maxTipPerListener;
 			cs.patience = c.patience * (1.0f - 0.3f * f) * (1.0f - 0.1f * tier);
 			cs.welcome = 0.15f * f + 0.03f * tier + (g_college.member ? 0.04f : 0.0f);
+			cs.tipSize *= 1.0f + 0.01f * g_collegeShows;  // word from the College goes before you
+			if (g_atCollege) {
+				cs.tipSize *= 0.6f;    // students have little to give
+				cs.patience *= 1.25f;  // and the hall knows good playing from bad
+			}
 			cs.oneTipEach = true;  // and once a day: see g_tipped
 			g_crowd.SetSettings(cs);
 			g_tierNow[0] = Tier(Instrument::Lute);
@@ -1336,6 +1395,33 @@ namespace Performance
 				syn->SetQuality(Instrument::Lute, g_tierNow[0]);
 				syn->SetQuality(Instrument::Flute, g_tierNow[1]);
 			}
+		}
+
+		// what the College makes of a performance in its own hall
+		void EndCollegeShow()
+		{
+			if (!g_atCollege || g_heardFor < 60.0) {
+				return;
+			}
+			const double avg = g_moodSum / g_heardFor;
+			std::string  judge = "Viarmo";
+			for (auto id : g_present) {
+				if (TeacherOf(NameOf(id)) && !IsStudent(NameOf(id))) {
+					judge = NameOf(id);
+					break;
+				}
+			}
+			if (avg >= 0.7) {
+				if (g_collegeShows < 10) {
+					++g_collegeShows;
+				}
+				Hud(fmt::format("{}: \"The College takes note of you. Word of this will travel.\"", judge));
+				Say(fmt::format("The College takes note ({} performance{} so far): rooms everywhere tip a little more.", g_collegeShows, g_collegeShows == 1 ? "" : "s"),
+					kGoldCol);
+			} else if (avg < 0.35) {
+				Hud(fmt::format("{}: \"Practise more before you play in these halls again.\"", judge));
+			}
+			spdlog::info("College show: room {:.2f}, noted {}", avg, g_collegeShows);
 		}
 
 		// what the town makes of this performance
@@ -1422,7 +1508,12 @@ namespace Performance
 			g_moodSum = g_heardFor = 0.0;
 			g_thrown = false;
 			g_college = CollegeStanding();
+			g_atCollege = AtTheCollege();
+			g_recognised = false;
 			ApplyCrowdSettings();
+			if (g_atCollege) {
+				Say("You play in the College's own hall. The students will listen; the teachers will judge.", kDim);
+			}
 			g_names.clear();
 			g_feed.clear();
 			g_earned = 0;
@@ -1449,6 +1540,7 @@ namespace Performance
 			}
 			g_playing = false;
 			g_midiLive = false;
+			EndCollegeShow();
 			EndFame();
 			SendAllAway();
 			for (auto id : g_lookers) {
@@ -1747,7 +1839,7 @@ namespace Performance
 			std::string what = g_act == Act::Free ? "Free play" : g_act == Act::Along ? "Playing along: " + g_song.title :
 			                   (Audio::SongPaused() ? "Paused: " : "Playing: ") + g_song.title;
 			{
-				std::string inst = fmt::format("{}{}", TierWord(g_tierNow[g_inst == Instrument::Lute ? 0 : 1]), InstName(g_inst));
+				std::string inst = InstLabel(g_inst, g_tierNow[g_inst == Instrument::Lute ? 0 : 1]);
 				inst[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(inst[0])));
 				const std::string head = fmt::format("{}  ·  {}", inst, what);
 				Text(dl, F.book, { p0.x + 16.0f * s, y }, kGoldCol, head);
@@ -2046,7 +2138,15 @@ namespace Performance
 			// how fine it is, and your name in this town
 			{
 				const int t = g_tierNow[g_inst == Instrument::Lute ? 0 : 1];
-				ImGui::TextDisabled("Your %s: %s", InstName(g_inst), t >= 2 ? "masterwork" : t == 1 ? "fine" : "common");
+				if (t >= 3) {
+					ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.45f, 1.0f), "You're playing %s", InstLabel(g_inst, t).c_str());
+					if (ImGui::IsItemHovered()) {
+						ImGui::SetTooltip("%s", g_inst == Instrument::Lute ? "Finn's own eight-course lute, the first ever made. Rooms hear the difference." :
+						                                                     "Pantea's own flute. It sings like no other.");
+					}
+				} else {
+					ImGui::TextDisabled("Your %s: %s", InstName(g_inst), t >= 2 ? "masterwork" : t == 1 ? "fine" : "common");
+				}
 				if (g_town) {
 					ImGui::SameLine(0.0f, 30.0f * s);
 					const float f = FameIn(g_town);
@@ -2608,6 +2708,9 @@ namespace Performance
 			a_intfc->WriteRecordData(g_refit[0]);
 			a_intfc->WriteRecordData(g_refit[1]);
 		}
+		if (a_intfc->OpenRecord('COLL', kSaveVersion)) {
+			a_intfc->WriteRecordData(g_collegeShows);
+		}
 	}
 
 	void Load(SKSE::SerializationInterface* a_intfc)
@@ -2620,6 +2723,7 @@ namespace Performance
 		g_plays.clear();
 		g_favourites.clear();
 		g_signature.clear();
+		g_collegeShows = 0;
 		std::uint32_t type = 0, version = 0, length = 0;
 		while (a_intfc->GetNextRecordInfo(type, version, length)) {
 			if (version != kSaveVersion) {
@@ -2732,6 +2836,9 @@ namespace Performance
 						g_favourites.insert(title);
 					}
 				}
+			} else if (type == 'COLL') {
+				a_intfc->ReadRecordData(g_collegeShows);
+				g_collegeShows = std::clamp(g_collegeShows, 0, 10);
 			} else if (type == 'RFIT') {
 				a_intfc->ReadRecordData(g_refit[0]);
 				a_intfc->ReadRecordData(g_refit[1]);
@@ -2755,5 +2862,6 @@ namespace Performance
 		g_plays.clear();
 		g_favourites.clear();
 		g_signature.clear();
+		g_collegeShows = 0;
 	}
 }

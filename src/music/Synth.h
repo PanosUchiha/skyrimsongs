@@ -43,9 +43,9 @@ namespace music
 		void Coin(float a_volume);  // a coin landing: a patron's tip
 		void SetVolume(float a_v);
 		void SetReverb(float a_wet);
-		// How fine the instrument is: 0 a common one, 1 fine, 2 masterwork. A better lute rings longer through a
-		// fuller body; a better flute speaks cleaner, steadier, with a sweeter vibrato.
-		void SetQuality(Instrument a_inst, int a_tier) { m_quality[a_inst == Instrument::Lute ? 0 : 1] = a_tier < 0 ? 0 : a_tier > 2 ? 2 : a_tier; }
+		// How fine the instrument is: 0 a common one, 1 fine, 2 masterwork, 3 a legend (Finn's own lute, Pantea's flute).
+		// A better lute rings longer through a fuller body; a better flute speaks cleaner, steadier, with a sweeter vibrato.
+		void SetQuality(Instrument a_inst, int a_tier) { m_quality[a_inst == Instrument::Lute ? 0 : 1] = a_tier < 0 ? 0 : a_tier > 3 ? 3 : a_tier; }
 
 		// Mono, overwrites a_out. Call from one thread only (the audio thread).
 		void Render(float* a_out, int a_frames);
