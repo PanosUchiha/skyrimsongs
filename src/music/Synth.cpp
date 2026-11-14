@@ -20,7 +20,7 @@ namespace music
 		// loudness by key (dB at MIDI notes 24, 30, 36 ... 108), measured with tests/voicing so every note a song
 		// can play (C2-A7, the range of the songbook) comes out about as loud as the others
 		constexpr float kLuteNorm[] = { -5.6f, -5.6f, -5.5f, -5.2f, -5.5f, -1.9f, -1.4f, 0.3f, 1.6f, 1.9f, 3.5f, 6.7f, 9.1f, 10.2f, 17.2f };
-		constexpr float kFluteNorm[] = { 2.7f, 2.7f, 2.7f, 2.7f, 2.7f, 2.7f, 2.7f, 1.8f, 1.0f, 0.2f, -0.7f, -2.3f, -4.0f, -4.6f, -4.8f };
+		constexpr float kFluteNorm[] = { 1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 0.7f, 0.4f, 0.0f, -0.6f, -1.8f, -3.1f, -3.6f, -3.8f };
 		float NormDb(const float* a_table, int a_pitch)
 		{
 			const float x = std::clamp((a_pitch - 24) / 6.0f, 0.0f, 13.999f);
@@ -374,39 +374,63 @@ namespace music
 		v.age += dt;
 		const float glide = 1.0f - std::exp(static_cast<float>(-dt / 0.035));
 		v.curFreq += (v.targetFreq - v.curFreq) * glide;
-		// where in the flute's range this is: 0 low register (C4) .. 1 top (C7)
+		// where in the flute's range this is: 0 low register (C4) .. 1 top (C7); below C4, "deep"
 		const float reg = std::clamp(std::log2(v.curFreq / 261.63f) / 3.0f, 0.0f, 1.0f);
-		const float scoop = 1.0f - 0.015f * std::exp(static_cast<float>(-v.age / 0.05));
-		const float bloom = std::clamp(static_cast<float>((v.age - 0.3) / 0.6), 0.0f, 1.0f);
-		const float rate = 5.0f + 0.6f * reg;
-		const float vib = 0.005f * bloom * static_cast<float>(std::sin(kTau * rate * v.age));
-		const float f = v.curFreq * scoop * (1.0f + vib);
+		const float lo = 1.0f - reg;
+		const float deep = std::clamp((261.63f - v.curFreq) / (261.63f - 65.41f), 0.0f, 1.0f);
+
+		// the breath: rises (and falls) with a little overshoot-free swell
+		const float target = v.released ? 0.0f : (0.55f + 0.45f * v.vel);
+		const float tau = v.released ? 0.08f : (0.06f - 0.03f * reg);
+		v.env += (target - v.env) * (1.0f - std::exp(static_cast<float>(-dt / tau)));
+		const float breath = v.env / (0.55f + 0.45f * (std::max)(v.vel, 0.05f));  // 0..1 of this note's full breath
+
+		// a player is never quite steady: slow random wander (a few Hz) in pitch and loudness
+		v.jitP += (Noise() - v.jitP) * 0.0004f;
+		v.jitA += (Noise() - v.jitA) * 0.0006f;
+		const float scoop = 1.0f - 0.012f * std::exp(static_cast<float>(-v.age / 0.06));
+		const float bloom = std::clamp(static_cast<float>((v.age - 0.35) / 0.7), 0.0f, 1.0f);
+		const float rate = 5.2f + 0.5f * reg;
+		const float vib = 0.0045f * bloom * static_cast<float>(std::sin(kTau * rate * v.age));
+		const float f = v.curFreq * scoop * (1.0f + vib + 0.0025f * v.jitP);
 		v.phase += f * dt;
 		v.phase -= std::floor(v.phase);
 		const double p = kTau * v.phase;
-		// the low register is rich in harmonics, the top nearly pure
-		const float lo = 1.0f - reg;
-		// below the flute's own range (C4) it plays like a big, soft low flute: little fundamental (so no boom),
-		// the tone carried by its harmonics and breath, and quieter
-		const float deep = std::clamp((261.63f - v.curFreq) / (261.63f - 65.41f), 0.0f, 1.0f);
+
+		// the tone: harmonics fill in as the breath does (a soft note is nearly pure), the low register richer
+		const float b2 = breath * breath, b3 = b2 * breath;
 		const float h1 = 1.0f - 0.7f * deep;
-		const float h2 = 0.05f + 0.33f * lo + 0.3f * deep, h3 = 0.02f + 0.16f * lo + 0.18f * deep, h4 = 0.06f * lo + 0.05f * deep, h5 = 0.03f * lo;
-		const float tone = static_cast<float>(h1 * std::sin(p) + h2 * std::sin(2.0 * p + 0.4) + h3 * std::sin(3.0 * p + 1.1) +
-											  h4 * std::sin(4.0 * p + 0.3) + h5 * std::sin(5.0 * p + 2.0)) *
-		                   (1.0f - 0.3f * deep);
-		const float target = v.released ? 0.0f : (0.55f + 0.45f * v.vel) * (0.85f + 0.3f * reg);
-		const float tau = v.released ? 0.07f : (0.055f - 0.025f * reg);
-		v.env += (target - v.env) * (1.0f - std::exp(static_cast<float>(-dt / tau)));
-		v.chiff *= std::exp(static_cast<float>(-dt / 0.045));
-		// the breath: noise band-passed around the note, stronger in the low register
+		const float h2 = (0.10f + 0.30f * lo + 0.30f * deep) * b2;
+		const float h3 = (0.04f + 0.14f * lo + 0.18f * deep) * b3;
+		const float h4 = (0.05f * lo + 0.05f * deep) * b3;
+		const float tone = static_cast<float>(h1 * std::sin(p) + h2 * std::sin(2.0 * p + 0.6) + h3 * std::sin(3.0 * p + 1.3) + h4 * std::sin(4.0 * p + 0.2));
+
+		// the air: noise resonating in the tube at the first harmonics (narrow band-passes), and a high hiss
 		const float n = Noise();
-		const float fc = 2.0f * static_cast<float>(std::sin(kPi * (std::min)(f * 1.5f, 9000.0f) / m_rate));
-		const float hp = n - v.bpLow - 0.9f * v.bpBand;
-		v.bpBand += fc * hp;
-		v.bpLow += fc * v.bpBand;
-		const float breath = 0.04f + 0.14f * lo + 0.08f * deep;
-		const float trem = 1.0f + 0.03f * bloom * static_cast<float>(std::sin(kTau * rate * v.age + 0.6));
-		return (tone * v.env * 0.9f * trem + v.bpBand * breath * v.env + n * v.chiff * (0.08f + 0.06f * lo)) * 0.44f * v.norm;  // (0.44: level with the lute)
+		float       air = 0.0f;
+		for (int k = 0; k < 3; ++k) {
+			const float fk = (std::min)(f * (k + 1), 12000.0f);
+			const float c = 2.0f * static_cast<float>(std::sin(kPi * fk / m_rate));
+			const float q = 0.06f;  // narrow
+			auto&       st = v.rz[k];
+			const float hp = n - st[0] - q * st[1];
+			st[1] += c * hp;
+			st[0] += c * st[1];
+			air += st[1] * (k == 0 ? 1.0f : k == 1 ? 0.6f : 0.35f);
+		}
+		const float hiss = 0.86f * (v.hissY + n - v.hissX);  // high-passed (~1 kHz)
+		v.hissX = n;
+		v.hissY = hiss;
+		const float airLevel = (0.035f + 0.05f * lo + 0.06f * deep);
+		const float hissLevel = (0.012f + 0.02f * lo + 0.02f * deep);
+
+		// the chiff: a puff of air at the start of each note (and lighter on a slur)
+		v.chiff *= std::exp(static_cast<float>(-dt / 0.035));
+
+		const float level = v.env * (1.0f + 0.04f * v.jitA) * (1.0f - 0.3f * deep);
+		const float trem = 1.0f + 0.025f * bloom * static_cast<float>(std::sin(kTau * rate * v.age + 0.6));
+		const float out = tone * level * trem + air * airLevel * v.env + hiss * (hissLevel * v.env + v.chiff * 0.25f);
+		return out * 0.44f * v.norm;  // (0.44: level with the lute)
 	}
 
 	float Synth::CoinSample(Voice& v)

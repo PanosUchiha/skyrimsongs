@@ -586,12 +586,23 @@ namespace Performance
 		// dances and raises a mug, an unhappy one scratches its head and points. Happy listeners also come over to
 		// stand in front of you while you play (KeepOffsetFromActor, which overrides their AI until you stop).
 		constexpr int kMaxVisitors = 4;
+		// A visitor walks (PathToReference) to an invisible marker on an arc in front of where you stood when you
+		// took the instrument out, then stays put (SetDontMove), turned to face you and looking at you. (Not
+		// KeepOffsetFromActor: that keeps them at an offset in your own frame, so every turn of the camera swung
+		// them round you in circles.)
+		constexpr RE::FormID kXMarker = 0x0000003B;
 		struct Visitor
 		{
-			RE::FormID id = 0;
-			int        slot = 0;
-			double     leaveAt = 0.0;  // they have places to be: each stays a while, then wanders off mid-song
+			RE::FormID          id = 0;
+			int                 slot = 0;
+			double              leaveAt = 0.0;  // they have places to be: each stays a while, then wanders off mid-song
+			double              giveUpAt = 0.0;  // couldn't get there
+			RE::ObjectRefHandle marker;
+			RE::NiPoint3        spot;
+			bool                arrived = false;
 		};
+		RE::NiPoint3 g_anchor;
+		float        g_anchorHeading = 0.0f;
 		std::unordered_map<RE::FormID, double> g_awayUntil;  // wandered off: not coming back for a while
 		std::vector<Visitor>                     g_visitors;
 		std::unordered_map<RE::FormID, double>   g_nextMove;  // listener -> when they may move again
@@ -651,10 +662,21 @@ namespace Performance
 			g_nextMove[a_id] = Now() + 15.0 + std::uniform_real_distribution<double>(0.0, 20.0)(g_rng);
 		}
 
+		void ReleaseActor(RE::Actor* a_actor)
+		{
+			if (!a_actor) {
+				return;
+			}
+			Call(a_actor, "SetDontMove", false);
+			Call(a_actor, "ClearLookAt");
+			Call(a_actor, "EvaluatePackage");  // back to their own business (ends the walk, if they were still on it)
+		}
+
 		void SendAway(const Visitor& a_v)
 		{
-			if (auto* a = ActorOf(a_v.id)) {
-				Call(a, "ClearKeepOffsetFromActor");
+			ReleaseActor(ActorOf(a_v.id));
+			if (auto m = a_v.marker.get()) {
+				Call(m.get(), "Delete");
 			}
 		}
 
@@ -677,9 +699,34 @@ namespace Performance
 				return;
 			}
 			const double now = Now();
+			// visitors who've reached their spot stop there, turn to you and watch
+			for (auto& v : g_visitors) {
+				if (v.arrived) {
+					continue;
+				}
+				auto* a = ActorOf(v.id);
+				if (!a) {
+					continue;
+				}
+				const auto at = a->GetPosition();
+				if (std::hypot(at.x - v.spot.x, at.y - v.spot.y) < 70.0f) {
+					v.arrived = true;
+					Call(a, "SetDontMove", true);
+					const auto  me = player->GetPosition();
+					const float deg = std::atan2(me.x - at.x, me.y - at.y) * 180.0f / 3.14159265f;
+					Call(a, "SetAngle", 0.0f, 0.0f, deg);
+					Call(a, "SetLookAt", static_cast<RE::TESObjectREFR*>(player), false);
+					g_nextMove[v.id] = now + 3.0;
+				}
+			}
 			// visitors who've cooled off go back to what they were doing, and any of them may just wander off
 			std::erase_if(g_visitors, [&](const Visitor& v) {
 				const double mood = g_crowd.MoodOf(v.id);
+				if (!v.arrived && now >= v.giveUpAt) {
+					SendAway(v);  // couldn't find a way: never mind
+					g_awayUntil[v.id] = now + 120.0;
+					return true;
+				}
 				if (mood < 0.45 || now >= v.leaveAt) {
 					SendAway(v);
 					if (mood >= 0.45) {
@@ -713,13 +760,27 @@ namespace Performance
 				while (std::any_of(g_visitors.begin(), g_visitors.end(), [&](const Visitor& v) { return v.slot == slot; })) {
 					++slot;
 				}
-				// a little arc in front of you, facing you
+				// a little arc in front of where you stood (in the world, not your frame), each with a marker to walk to
 				static constexpr float kAngles[kMaxVisitors] = { -20.0f, 25.0f, -55.0f, 60.0f };
-				const float            rad = kAngles[slot] * 3.14159265f / 180.0f, r = 210.0f;
-				Call(a, "KeepOffsetFromActor", static_cast<RE::Actor*>(player), r * std::sin(rad), r * std::cos(rad), 0.0f, 0.0f, 0.0f, 180.0f, 80.0f, 30.0f);
+				const float            ang = g_anchorHeading + kAngles[slot] * 3.14159265f / 180.0f, r = 210.0f;
+				const RE::NiPoint3     spot{ g_anchor.x + r * std::sin(ang), g_anchor.y + r * std::cos(ang), g_anchor.z };
+				auto*                  markerBase = RE::TESForm::LookupByID<RE::TESBoundObject>(kXMarker);
+				auto                   marker = markerBase ? player->PlaceObjectAtMe(markerBase, false) : RE::NiPointer<RE::TESObjectREFR>{};
+				if (!marker) {
+					continue;
+				}
+				marker->SetPosition(spot);
+				Call(a, "PathToReference", marker.get(), 0.5f);  // a walk
+				Visitor v;
+				v.id = id;
+				v.slot = slot;
 				// how long they stay: anything from half a minute to a few minutes
-				g_visitors.push_back({ id, slot, now + std::uniform_real_distribution<double>(30.0, 180.0)(g_rng) });
-				g_nextMove[id] = now + 4.0;  // let them get there first
+				v.leaveAt = now + std::uniform_real_distribution<double>(30.0, 180.0)(g_rng);
+				v.giveUpAt = now + 25.0;
+				v.marker = marker->GetHandle();
+				v.spot = spot;
+				g_visitors.push_back(v);
+				g_nextMove[id] = now + 1e9;  // no moves until they've got there
 				spdlog::info("{} comes over to listen", NameOfActor(a));
 			}
 			// the room's movements
@@ -992,6 +1053,8 @@ namespace Performance
 			g_badFor = 0.0;
 			g_warned = false;
 			g_cell = Player()->GetParentCell();
+			g_anchor = Player()->GetPosition();
+			g_anchorHeading = Player()->GetAngleZ();
 			g_quality = 0.5;
 			++g_performances;
 			ScanListeners();
@@ -1682,9 +1745,7 @@ namespace Performance
 		Stop("game loaded");
 		MuteMusic(false);
 		for (auto id : g_staleVisitors) {
-			if (auto* a = ActorOf(id)) {
-				Call(a, "ClearKeepOffsetFromActor");
-			}
+			ReleaseActor(ActorOf(id));
 		}
 		g_staleVisitors.clear();
 	}
