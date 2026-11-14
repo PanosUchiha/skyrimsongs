@@ -19,7 +19,7 @@ namespace music
 
 		// loudness by key (dB at MIDI notes 24, 30, 36 ... 108), measured with tests/voicing so every note a song
 		// can play (C2-A7, the range of the songbook) comes out about as loud as the others
-		constexpr float kLuteNorm[] = { -5.6f, -5.6f, -5.5f, -5.2f, -5.5f, -1.9f, -1.4f, 0.3f, 1.6f, 1.9f, 3.5f, 6.7f, 9.1f, 10.2f, 17.2f };
+		constexpr float kLuteNorm[] = { -5.7f, -5.7f, -5.6f, -5.3f, -5.6f, -2.0f, -1.5f, 0.2f, 1.6f, 1.8f, 3.4f, 6.9f, 9.2f, 10.4f, 21.9f };
 		constexpr float kFluteNorm[] = { 1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 1.3f, 0.7f, 0.4f, 0.0f, -0.6f, -1.8f, -3.1f, -3.6f, -3.8f };
 		float NormDb(const float* a_table, int a_pitch)
 		{
@@ -531,10 +531,10 @@ namespace music
 			const float wet = Reverb(dry) * m_wet;
 			// a limiter (instant attack, 120 ms release) keeps loud chords under the soft-clip, which on its own
 			// crackled on dense passages; the tanh is only a last safety
-			const float x = (dry + wet) * m_volume * 0.7f;
+			const float x = (dry + wet) * m_volume * 0.6f;
 			const float ax = std::abs(x);
 			m_limEnv = ax > m_limEnv ? ax : m_limEnv * 0.99983f;
-			const float g = m_limEnv > 0.7f ? 0.7f / m_limEnv : 1.0f;
+			const float g = m_limEnv > 0.8f ? 0.8f / m_limEnv : 1.0f;
 			a_out[i] = std::tanh(x * g);
 		}
 		int n = 0;
