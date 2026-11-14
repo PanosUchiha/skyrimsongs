@@ -16,7 +16,7 @@ namespace Audio
 	{
 		constexpr UINT32 kRate = 48000;
 		constexpr int    kBlock = 384;  // 8 ms
-		constexpr int    kBuffers = 4;
+		constexpr int    kBuffers = 6;  // 48 ms queued: no gaps (crackles) if the audio thread is held up a moment
 
 		struct SongEvent
 		{

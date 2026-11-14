@@ -529,7 +529,13 @@ namespace music
 			m_fluteHpY = fhp;
 			const float dry = body + fhp * 0.8f + coin;
 			const float wet = Reverb(dry) * m_wet;
-			a_out[i] = std::tanh((dry + wet) * m_volume * 0.7f);
+			// a limiter (instant attack, 120 ms release) keeps loud chords under the soft-clip, which on its own
+			// crackled on dense passages; the tanh is only a last safety
+			const float x = (dry + wet) * m_volume * 0.7f;
+			const float ax = std::abs(x);
+			m_limEnv = ax > m_limEnv ? ax : m_limEnv * 0.99983f;
+			const float g = m_limEnv > 0.7f ? 0.7f / m_limEnv : 1.0f;
+			a_out[i] = std::tanh(x * g);
 		}
 		int n = 0;
 		for (const auto& v : m_voices) {
