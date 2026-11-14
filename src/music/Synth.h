@@ -8,10 +8,14 @@
 #include <vector>
 
 // The instruments, synthesised in real time (no samples): plain C++ with no game code, so the tests can render it.
-//  - Lute: two Karplus-Strong strings per note (a lute course is a pair of strings, very slightly apart in tune),
-//    plucked near the bridge, through a small wooden body (three resonances) and a little room.
-//  - Flute: a breathy additive tone with a chiff at the start, a slight scoop up into the note and a vibrato that
-//    blooms if you hold it. Played live it's monophonic and slurs from note to note, like a real flute.
+//  - Lute (voiced for C2-C5): two Karplus-Strong strings per note, as a lute's courses are strung: the bass
+//    courses in octaves, the middle ones in unison pairs very slightly apart, the top (the chanterelle) a single
+//    string. Low notes are warm and ring long, high ones bright and short; plucked nearer the bridge as they go
+//    up, with the click of the finger, through a small wooden body and a little room.
+//  - Flute (voiced for C4-C7): low notes soft, breathy and rich in harmonics, high ones pure, bright and
+//    stronger, as a real flute's registers are; a chiff at the start, a slight scoop up into the note and a
+//    vibrato that blooms if you hold it. Played live it's monophonic and slurs from note to note.
+//  Every key's loudness is evened out (measured, see kLuteNorm / kFluteNorm).
 namespace music
 {
 	enum class Instrument : std::uint8_t
@@ -81,6 +85,7 @@ namespace music
 			// lute
 			String s[2];
 			float  t60 = 3.0f;
+			float  norm = 1.0f;    // loudness, evened out across the 37 keys
 			float  freq = 261.6f;
 			// flute
 			double phase = 0.0;

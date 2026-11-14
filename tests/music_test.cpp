@@ -186,47 +186,77 @@ namespace
 		CHECK(!keymap::LabelFor(85, 48, l));
 	}
 
-	double FreeQuality(const std::vector<std::pair<double, int>>& a_notes, double a_now)
+	// averaged over the performance, the way the crowd hears it (judged every half second from 4 s on)
+	double Heard(const std::vector<std::pair<double, int>>& a_notes)
 	{
-		FreeJudge j;
-		for (auto [t, p] : a_notes) {
-			j.Note(t, p);
+		double sum = 0.0;
+		int    n = 0;
+		for (double t = 4.0; t <= a_notes.back().first + 0.5; t += 0.5) {
+			FreeJudge j;
+			for (auto [nt, p] : a_notes) {
+				if (nt <= t) {
+					j.Note(nt, p);
+				}
+			}
+			sum += j.Judge(t).quality;
+			++n;
 		}
-		return j.Judge(a_now).quality;
+		return n ? sum / n : 0.0;
 	}
 
 	void TestFreeJudge()
 	{
-		// a tune in time and in key
-		std::vector<std::pair<double, int>> tune;
-		const int                           line[] = { 60, 62, 64, 65, 67, 65, 64, 62, 60, 64, 67, 72, 71, 69, 67, 65 };
-		for (int i = 0; i < 16; ++i) {
-			tune.push_back({ i * 0.4, line[i] });
+		// real tunes, played freely, go down well
+		for (const auto& s : BuiltInSongs()) {
+			std::vector<std::pair<double, int>> n;
+			for (const auto& x : s.melody) {
+				n.push_back({ x.start, x.pitch });
+			}
+			const double q = Heard(n);
+			std::printf("free play: %-18s %.2f\n", s.title.c_str(), q);
+			CHECK(q > 0.7);
 		}
-		const double good = FreeQuality(tune, 6.4);
-		// mashing: random keys across all three rows at random times
-		std::mt19937                        rng(7);
-		std::vector<std::pair<double, int>> mash;
+		std::mt19937 rng(7);
+		auto         pick = [&](int a, int b) { return std::uniform_int_distribution<int>(a, b)(rng); };
+		// random keys, even perfectly in time, don't
+		std::vector<std::pair<double, int>> randomSteady, randomAny, chromatic, spam, hammer, clusters, triads;
 		double                              t = 0.0;
 		for (int i = 0; i < 40; ++i) {
-			t += std::uniform_real_distribution<double>(0.04, 0.45)(rng);
-			const int r = std::uniform_int_distribution<int>(0, 2)(rng), c = std::uniform_int_distribution<int>(0, 6)(rng);
-			mash.push_back({ t, 48 + r * 12 + keymap::kWhite[c] + (std::uniform_int_distribution<int>(0, 2)(rng) == 0 ? 1 : 0) });
+			randomSteady.push_back({ i * 0.4, 48 + pick(0, 2) * 12 + keymap::kWhite[pick(0, 6)] });
+			t += std::uniform_real_distribution<double>(0.1, 0.5)(rng);
+			randomAny.push_back({ t, 48 + pick(0, 2) * 12 + keymap::kWhite[pick(0, 6)] });
+			chromatic.push_back({ i * 0.4, 48 + pick(0, 35) });
 		}
-		const double bad = FreeQuality(mash, t);
-		// one note, over and over
-		std::vector<std::pair<double, int>> drone;
+		for (int i = 0; i < 80; ++i) {
+			spam.push_back({ i * 0.07, 60 + pick(0, 11) });
+			hammer.push_back({ i * 0.12, 60 });
+		}
 		for (int i = 0; i < 16; ++i) {
-			drone.push_back({ i * 0.4, 60 });
+			const int r = 60 + pick(0, 11);
+			clusters.push_back({ i * 0.6, r });
+			clusters.push_back({ i * 0.6 + 0.01, r + 1 });
+			clusters.push_back({ i * 0.6 + 0.02, r + 6 });
+			static constexpr int kChords[4][3] = { { 60, 64, 67 }, { 65, 69, 72 }, { 67, 71, 74 }, { 60, 64, 67 } };
+			for (int k = 0; k < 3; ++k) {
+				triads.push_back({ i * 0.8 + k * 0.01, kChords[i % 4][k] });
+			}
 		}
-		const double boring = FreeQuality(drone, 6.4);
-		// then nothing for ten seconds
-		const double silent = FreeQuality(tune, 6.4 + 10.0);
-		std::printf("free play: tune %.2f, mash %.2f, drone %.2f, gone quiet %.2f\n", good, bad, boring, silent);
-		CHECK(good > 0.8);
-		CHECK(bad < 0.5);
-		CHECK(boring < good - 0.15);
-		CHECK(silent < 0.2);
+		const double qSteady = Heard(randomSteady), qAny = Heard(randomAny), qChrom = Heard(chromatic), qSpam = Heard(spam), qHammer = Heard(hammer),
+					 qClusters = Heard(clusters), qTriads = Heard(triads);
+		std::printf("free play: random in time %.2f, random %.2f, chromatic %.2f, spam %.2f, hammering %.2f, clashing chords %.2f, I-IV-V-I %.2f\n",
+			qSteady, qAny, qChrom, qSpam, qHammer, qClusters, qTriads);
+		CHECK(qSteady < 0.55);
+		CHECK(qAny < 0.35);
+		CHECK(qChrom < 0.55);
+		CHECK(qSpam < 0.2);
+		CHECK(qHammer < 0.4);
+		CHECK(qClusters < 0.35);
+		CHECK(qTriads > 0.6);
+		// silence isn't judged: the room just drifts
+		FreeJudge j;
+		j.Note(1.0, 60);
+		CHECK(!j.Silent(4.0));
+		CHECK(j.Silent(7.0));
 		FreeJudge empty;
 		CHECK(empty.Judge(5.0).quality < 0.2);
 	}

@@ -13,6 +13,21 @@ namespace music
 		constexpr double kTau = 2.0 * kPi;
 
 		float PitchHz(int a_pitch) { return 440.0f * std::pow(2.0f, (a_pitch - 69) / 12.0f); }
+
+		// 0 at the instrument's lowest key, 1 at its highest (37 keys: lute C2-C5, flute C4-C7)
+		float Register(int a_pitch, int a_low) { return std::clamp((a_pitch - a_low) / 36.0f, 0.0f, 1.0f); }
+
+		// loudness by key (dB, every 6 semitones from the lowest key and beyond), measured with
+		// tests/voicing so every key of both instruments comes out about as loud as the others
+		constexpr float kLuteNorm[] = { -2.9f, -2.9f, -2.8f, -2.6f, -2.7f, 0.7f, 1.4f, 3.1f, 4.0f, 3.0f, 3.0f };
+		constexpr float kFluteNorm[] = { 2.3f, 2.3f, 2.0f, 1.6f, 1.1f, 0.5f, -0.4f, -2.0f, -3.5f, -3.9f, -3.9f };
+		float NormDb(const float* a_table, int a_pitch, int a_low)
+		{
+			const float x = std::clamp((a_pitch - a_low + 12) / 6.0f, 0.0f, 9.999f);  // the table starts an octave below
+			const int   i = static_cast<int>(x);
+			return a_table[i] + (a_table[i + 1] - a_table[i]) * (x - i);
+		}
+		constexpr int kLuteLow = 36, kFluteLow = 60;
 	}
 
 	const char* InstrumentName(Instrument a_i)
@@ -150,25 +165,36 @@ namespace music
 		a_v.vel = a_vel;
 		a_v.freq = PitchHz(a_pitch);
 		a_v.held = true;
-		// the course's two strings: the second 1.8 cents sharp and quieter
+		const float reg = Register(a_pitch, kLuteLow);
+		// how the course is strung: bass in octaves, middle in unison pairs, the top a single string
+		const bool   octave = a_pitch < 53;   // below F3
+		const bool   single = a_pitch >= 67;  // G4 and up
+		const double ratio2 = octave ? 2.0 : std::pow(2.0, 1.8 / 1200.0);
+		const float  amp2 = single ? 0.0f : octave ? 0.42f : 0.38f;
 		for (int k = 0; k < 2; ++k) {
 			auto&        s = a_v.s[k];
-			const double f = a_v.freq * (k == 0 ? 1.0 : std::pow(2.0, 1.8 / 1200.0));
+			const double f = a_v.freq * (k == 0 ? 1.0 : ratio2);
 			const double d = std::clamp(m_rate / f - 0.5, 2.2, static_cast<double>(kMaxDelay - 2));
 			s.len = static_cast<int>(d - 0.1);
 			const double frac = d - s.len;
 			s.apC = static_cast<float>((1.0 - frac) / (1.0 + frac));
 			s.apX = s.apY = s.prev = 0.0f;
 			s.idx = 0;
-			// the pluck: noise, darker for a soft touch, with the harmonics a pluck near the bridge leaves out
-			const float a = 0.18f + 0.62f * a_vel;
+			const float amp = k == 0 ? 0.62f : amp2;
+			if (amp <= 0.0f) {
+				std::fill(s.buf.begin(), s.buf.begin() + s.len, 0.0f);
+				continue;
+			}
+			// the pluck: noise, darker for a soft touch and for the bass, with the harmonics a pluck at that point
+			// on the string leaves out (nearer the bridge as the notes go up)
+			const float a = std::clamp((0.12f + 0.55f * a_vel) * (0.55f + 0.7f * reg), 0.05f, 0.95f);
 			float       y1 = 0.0f, y2 = 0.0f;
 			for (int i = 0; i < s.len; ++i) {
 				y1 += a * (Noise() - y1);
 				y2 += a * (y1 - y2);
 				s.buf[i] = y2;
 			}
-			const int m = (std::max)(1, static_cast<int>(s.len * 0.17));
+			const int m = (std::max)(1, static_cast<int>(s.len * (0.21f - 0.09f * reg)));
 			std::array<float, kMaxDelay> tmp{};
 			for (int i = 0; i < s.len; ++i) {
 				tmp[i] = s.buf[i] - s.buf[(i - m + s.len) % s.len];
@@ -183,13 +209,17 @@ namespace music
 				tmp[i] -= static_cast<float>(mean);
 				peak = (std::max)(peak, std::abs(tmp[i]));
 			}
-			const float amp = (0.25f + 0.75f * a_vel) * (k == 0 ? 0.62f : 0.38f) / peak;
+			const float g = (0.25f + 0.75f * a_vel) * amp / peak;
 			for (int i = 0; i < s.len; ++i) {
-				s.buf[i] = tmp[i] * amp;
+				s.buf[i] = tmp[i] * g;
 			}
 		}
-		const float t60 = std::clamp(5.0f * std::pow(110.0f / a_v.freq, 0.4f), 1.0f, 6.0f) * (0.8f + 0.2f * a_vel);
+		// the finger's click
+		a_v.chiff = 0.10f * a_vel * (0.6f + 0.6f * reg);
+		// bass rings long, treble short
+		const float t60 = std::clamp(7.0f * std::pow(65.4f / a_v.freq, 0.45f), 1.2f, 8.0f) * (0.8f + 0.2f * a_vel);
 		SetLuteDecay(a_v, t60);
+		a_v.norm = std::pow(10.0f, NormDb(kLuteNorm, a_pitch, kLuteLow) / 20.0f);
 	}
 
 	void Synth::Apply(const Event& e)
@@ -218,6 +248,7 @@ namespace music
 							v.pitch = e.pitch;
 							v.targetFreq = PitchHz(e.pitch);
 							v.vel = e.value;
+							v.norm = std::pow(10.0f, NormDb(kFluteNorm, e.pitch, kFluteLow) / 20.0f);
 							v.held = true;
 							v.chiff = (std::max)(v.chiff, 0.18f * e.value);
 							return;
@@ -231,7 +262,8 @@ namespace music
 				v->vel = e.value;
 				v->held = true;
 				v->curFreq = v->targetFreq = PitchHz(e.pitch);
-				v->chiff = 0.5f * e.value;
+				v->chiff = 0.5f * e.value * (1.0f - 0.5f * Register(e.pitch, kFluteLow));
+				v->norm = std::pow(10.0f, NormDb(kFluteNorm, e.pitch, kFluteLow) / 20.0f);
 				v->phase = 0.0;
 			}
 			break;
@@ -243,6 +275,7 @@ namespace music
 						if (!m_fluteHeld.empty()) {
 							v.pitch = m_fluteHeld.back();
 							v.targetFreq = PitchHz(v.pitch);
+							v.norm = std::pow(10.0f, NormDb(kFluteNorm, v.pitch, kFluteLow) / 20.0f);
 						} else {
 							v.held = false;
 							v.released = !m_sustain;
@@ -325,6 +358,10 @@ namespace music
 			}
 			out += y;
 		}
+		if (v.chiff > 1e-4f) {
+			out += Noise() * v.chiff;
+			v.chiff *= 0.9948f;  // ~4 ms at 48 kHz
+		}
 		return out;
 	}
 
@@ -334,29 +371,34 @@ namespace music
 		v.age += dt;
 		const float glide = 1.0f - std::exp(static_cast<float>(-dt / 0.035));
 		v.curFreq += (v.targetFreq - v.curFreq) * glide;
+		// where in the flute's range this is: 0 low register (C4) .. 1 top (C7)
+		const float reg = std::clamp(std::log2(v.curFreq / 261.63f) / 3.0f, 0.0f, 1.0f);
 		const float scoop = 1.0f - 0.015f * std::exp(static_cast<float>(-v.age / 0.05));
 		const float bloom = std::clamp(static_cast<float>((v.age - 0.3) / 0.6), 0.0f, 1.0f);
-		const float vib = 0.0055f * bloom * static_cast<float>(std::sin(kTau * 5.2 * v.age));
+		const float rate = 5.0f + 0.6f * reg;
+		const float vib = 0.005f * bloom * static_cast<float>(std::sin(kTau * rate * v.age));
 		const float f = v.curFreq * scoop * (1.0f + vib);
 		v.phase += f * dt;
 		v.phase -= std::floor(v.phase);
 		const double p = kTau * v.phase;
-		// higher notes are purer
-		const float bright = std::clamp(1.3f - (v.curFreq - 260.0f) / 1400.0f, 0.4f, 1.3f);
-		const float tone = static_cast<float>(std::sin(p) + 0.24 * bright * std::sin(2.0 * p + 0.4) + 0.08 * bright * std::sin(3.0 * p + 1.1) +
-											  0.03 * bright * std::sin(4.0 * p));
-		const float target = v.released ? 0.0f : 0.55f + 0.45f * v.vel;
-		const float tau = v.released ? 0.07f : 0.035f;
+		// the low register is rich in harmonics, the top nearly pure
+		const float lo = 1.0f - reg;
+		const float h2 = 0.05f + 0.33f * lo, h3 = 0.02f + 0.16f * lo, h4 = 0.06f * lo, h5 = 0.03f * lo;
+		const float tone = static_cast<float>(std::sin(p) + h2 * std::sin(2.0 * p + 0.4) + h3 * std::sin(3.0 * p + 1.1) + h4 * std::sin(4.0 * p + 0.3) +
+											  h5 * std::sin(5.0 * p + 2.0));
+		const float target = v.released ? 0.0f : (0.55f + 0.45f * v.vel) * (0.85f + 0.3f * reg);
+		const float tau = v.released ? 0.07f : (0.055f - 0.025f * reg);
 		v.env += (target - v.env) * (1.0f - std::exp(static_cast<float>(-dt / tau)));
 		v.chiff *= std::exp(static_cast<float>(-dt / 0.045));
-		// the breath: noise band-passed around the note
+		// the breath: noise band-passed around the note, stronger in the low register
 		const float n = Noise();
 		const float fc = 2.0f * static_cast<float>(std::sin(kPi * (std::min)(f * 1.5f, 9000.0f) / m_rate));
 		const float hp = n - v.bpLow - 0.9f * v.bpBand;
 		v.bpBand += fc * hp;
 		v.bpLow += fc * v.bpBand;
-		const float trem = 1.0f + 0.03f * bloom * static_cast<float>(std::sin(kTau * 5.2 * v.age + 0.6));
-		return (tone * v.env * 0.9f * trem + v.bpBand * 0.10f * v.env + n * v.chiff * 0.12f) * 0.55f;
+		const float breath = 0.04f + 0.14f * lo;
+		const float trem = 1.0f + 0.03f * bloom * static_cast<float>(std::sin(kTau * rate * v.age + 0.6));
+		return (tone * v.env * 0.9f * trem + v.bpBand * breath * v.env + n * v.chiff * (0.08f + 0.06f * lo)) * 0.44f * v.norm;  // (0.44: level with the lute)
 	}
 
 	float Synth::CoinSample(Voice& v)
@@ -431,7 +473,7 @@ namespace music
 				}
 				if (v.inst == Instrument::Lute) {
 					v.age += dt;
-					s = LuteSample(v);
+					s = LuteSample(v) * v.norm;
 					lute += s;
 				} else {
 					s = FluteSample(v);

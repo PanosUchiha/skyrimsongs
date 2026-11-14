@@ -176,7 +176,7 @@ namespace Performance
 		}
 
 		const char* InstName(Instrument a_i) { return a_i == Instrument::Lute ? "lute" : "flute"; }
-		int         Base() { return (g_inst == Instrument::Lute ? 48 : 60) + g_octave * 12; }  // the bottom row's C
+		int         Base() { return (g_inst == Instrument::Lute ? 36 : 60) + g_octave * 12; }  // the bottom row's C: lute C2-C5, flute C4-C7
 
 		// ------------------------------------------------------------------------------------------ instruments
 		std::string Lower(const char* a_s)
@@ -564,7 +564,7 @@ namespace Performance
 		{
 			BackToFree();
 			g_song = a_song;
-			g_songShift = music::FitOctaves(g_song.melody, g_inst == Instrument::Lute ? 48 : 60, 36);
+			g_songShift = music::FitOctaves(g_song.melody, g_inst == Instrument::Lute ? 36 : 60, 36);
 			auto notes = g_song.all;
 			for (auto& n : notes) {
 				n.pitch += g_songShift;
@@ -932,6 +932,8 @@ namespace Performance
 			case Act::Free:
 				g_breakdown = g_free.Judge(now);
 				g_quality = g_breakdown.quality;
+				// a long silence isn't a bad performance, it's no performance: the room drifts back to neutral
+				performing = performing && !g_free.Silent(now);
 				break;
 			case Act::Along:
 				{
@@ -1046,7 +1048,7 @@ namespace Performance
 
 			const float W = (std::min)(980.0f * s, sw * 0.92f);
 			const bool  along = g_act == Act::Along;
-			const float headH = 34.0f * s, laneH = 30.0f * s, hwH = along ? laneH * 3.0f + 14.0f * s : (g_act == Act::Auto ? 26.0f * s : 0.0f);
+			const float headH = 34.0f * s, laneH = 30.0f * s, hwH = along ? laneH * 3.0f + 14.0f * s : 26.0f * s;
 			const float kbH = cfg.showKeyboard ? 150.0f * s : 0.0f;  // the piano
 			const float hintH = 24.0f * s;
 			const float H = headH + hwH + kbH + hintH + 18.0f * s;
@@ -1121,6 +1123,26 @@ namespace Performance
 				}
 				Text(dl, F.sm, { x1 - 6.0f * s, y + 2.0f * s }, kDim,
 					fmt::format("{:.0f}%   streak {}", g_chart.Score() * 100.0, g_chart.Streak()), 1.0f);
+				y += hwH;
+			} else if (g_act == Act::Free) {
+				// what the room hears in your playing
+				const auto& b = g_breakdown;
+				const bool  silent = g_free.Silent(now);
+				const std::pair<const char*, double> parts[] = { { "Rhythm", b.rhythm }, { "Melody", b.melody }, { "Key", b.key },
+					{ "Phrasing", b.stability }, { "Harmony", b.harmony }, { "Ideas", b.ideas } };
+				const float colW = (W - 32.0f * s) / 6.0f;
+				for (int i = 0; i < 6; ++i) {
+					const float  cx = p0.x + 16.0f * s + colW * i;
+					const double v = silent ? 0.0 : std::clamp(parts[i].second, 0.0, 1.0);
+					Text(dl, F.sm, { cx, y + 2.0f * s }, kDim, parts[i].first);
+					const ImVec2 b0(cx + 62.0f * s, y + 10.0f * s), b1(cx + colW - 14.0f * s, y + 15.0f * s);
+					dl->AddRectFilled(b0, b1, IM_COL32(60, 50, 40, 220), 2.0f * s);
+					const ImU32 c = v < 0.35 ? kRed : v < 0.6 ? IM_COL32(220, 200, 140, 255) : kGreen;
+					dl->AddRectFilled(b0, { b0.x + (b1.x - b0.x) * static_cast<float>(v), b1.y }, c, 2.0f * s);
+				}
+				if (b.spam < 1.0 && !silent) {
+					Text(dl, F.sm, { p1.x - 16.0f * s, y - 16.0f * s }, kRed, "sounds like noise", 1.0f);
+				}
 				y += hwH;
 			} else if (g_act == Act::Auto) {
 				const float  x0 = p0.x + 16.0f * s, x1 = p1.x - 16.0f * s;

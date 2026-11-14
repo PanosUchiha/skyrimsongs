@@ -19,7 +19,7 @@ Status: **first version, not yet tried in game.**
   a weapon out; drawing a weapon, a fight, a conversation or leaving the area stops you.
 - **The keyboard:** 37 notes, like a 37-key keyboard: three rows of seven keys, each an octave of white notes,
   lowest at the bottom (`Z X C V B N M`, `A S D F G H J`, `Q W E R T Y U`), and `I` for the top C. Shift for
-  sharps, Up/Down to move an octave. The lute runs C3-C6, the flute C4-C7. While you play, none of the keyboard reaches the game; the mouse
+  sharps, Up/Down to move an octave. The lute runs C2-C5 (a lute's range), the flute C4-C7. While you play, none of the keyboard reaches the game; the mouse
   still turns the camera.
 - **A MIDI keyboard:** every MIDI input Windows knows is opened while you play (and closed after), with velocity,
   the sustain pedal and all-notes-off. Its notes sound straight from the driver's thread, not on the next frame.
@@ -35,10 +35,18 @@ Every half second the plugin finds the people within earshot (`ListenRange`, the
 not hostile, not fighting, not asleep, not children, people not animals). Each has a mood, a taste (how hard to
 please) and a purse.
 
-- **How well you're playing** (0-1): a song from the songbook counts as great playing. Free play is judged
-  on the last eight seconds: rhythm (do the gaps between notes fit a steady beat and its halves and doubles?), key
-  (the share of notes in the best-fitting major or harmonic minor scale), melody (steps and small leaps score,
-  big jumps don't), pace (enough notes, not mashing) and variety, and a long silence loses the room.
+- **How well you're playing** (0-1): a song from the songbook counts as great playing. Free play is heard by a
+  music-theory "ear" over the last eight seconds (shown as bars while you play):
+  - rhythm: do the gaps between notes fit a steady beat and its halves, one and a halves and doubles?
+  - key: how strongly the notes imply one key (correlation with the Krumhansl-Kessler key profiles)
+  - phrasing: do the notes you rest on (long ones, before a breath, the last) land on the key's home notes?
+  - melody: steps, repeats and thirds score, big leaps and the tritone don't, a leap answered by a step back
+    is rewarded, and stepwise runs (the backbone of real tunes) count extra
+  - harmony: chords and overlapping notes - consonant intervals or clashes (seconds, sevenths, the tritone)?
+  - ideas: little figures (three intervals in the same rhythm) that come back within sixteen seconds
+  - pace and variety; and spam (hammering a key, a blur of notes, a fistful at once) halves it.
+  Random keys, even perfectly in time, land around "Listening"; real tunes around "Enjoying it" and up
+  (`tests/music_test.cpp` checks both). A silence of five seconds isn't judged: the room just drifts back.
 - **Moods** drift up or down with that; tips come faster and bigger the happier a listener is, the deeper their
   purse and the better your Speech, capped per listener per performance (`MaxTipPerListener`). Unhappy listeners
   heckle; delighted ones cheer; a song from the songbook ends in applause and a collection. You get Speech experience

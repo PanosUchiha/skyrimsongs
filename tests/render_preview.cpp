@@ -101,6 +101,16 @@ int main(int argc, char** argv)
 			WriteWav(dir + "/preview_flute.wav", Play(music::Instrument::Flute, s.melody, 12, 2.0), 48000);
 		}
 	}
+	// every one of the 37 keys, low to high, on each instrument
+	for (int k = 0; k < 2; ++k) {
+		const auto        inst = k == 0 ? music::Instrument::Lute : music::Instrument::Flute;
+		const int         low = k == 0 ? 36 : 60;
+		std::vector<music::Note> keys;
+		for (int i = 0; i < 37; ++i) {
+			keys.push_back({ i * 0.32, 0.28, low + i, 100, 0, 0 });
+		}
+		WriteWav(dir + (k == 0 ? "/preview_lute_37keys.wav" : "/preview_flute_37keys.wav"), Play(inst, keys, 0, 2.0), 48000);
+	}
 	{
 		music::Synth       s;
 		std::vector<float> out(48000);

@@ -10,19 +10,25 @@
 // How well you're playing, 0..1, for the crowd.
 namespace music
 {
-	// Free play: no sheet music, so what a listener hears is judged. Over the last eight seconds:
-	//  - rhythm: do the gaps between notes sit on a steady beat (and its halves and doubles)?
-	//  - key: do the notes keep to one scale?
-	//  - melody: mostly steps and small leaps, not random jumps across the keyboard
-	//  - pace: enough notes to be music, not so many it's mashing
-	//  - variety: not one note over and over
-	// and a long silence loses the room.
+	// Free play: no sheet music, so it listens the way an audience does - a music-theory "ear", not a note
+	// counter. Over the last eight seconds (sixteen for repeated ideas):
+	//  - rhythm: do the gaps between notes sit on a steady beat (and its halves, one and a halves and doubles)?
+	//  - key: how strongly the notes imply one key (Krumhansl-Kessler key profiles, as listeners hear tonality)
+	//  - stability: do the notes you land on - the long ones, the ones before a breath - rest on the key's
+	//    home notes (1, 3, 5), the way phrases end, rather than anywhere?
+	//  - melody: steps and small leaps, a leap answered by a step back, not random jumps across the keyboard
+	//  - harmony: notes sounding together (and over the ringing of the last ones) - consonant intervals
+	//    (thirds, fourths, fifths, sixths) or clashes (seconds, sevenths, the tritone)?
+	//  - ideas: real music repeats its little figures (the same intervals in the same rhythm); random notes don't
+	//  - pace and variety: enough notes, not one note over and over
+	//  - spam: hammering a key, or more notes a second than anyone can follow, is noise
+	// A pause between phrases is fine; a long silence isn't playing (the room just drifts), see Silent().
 	class FreeJudge
 	{
 	public:
 		struct Breakdown
 		{
-			double rhythm = 0.5, key = 0.5, melody = 0.5, pace = 0.0, variety = 0.0, mash = 1.0;
+			double rhythm = 0.5, key = 0.5, stability = 0.5, melody = 0.5, harmony = 1.0, ideas = 0.0, pace = 0.0, variety = 0.0, spam = 1.0;
 			double quality = 0.0;
 		};
 
@@ -30,6 +36,7 @@ namespace music
 		void      Note(double a_time, int a_pitch);
 		Breakdown Judge(double a_now) const;
 		double    LastNote() const { return m_last; }
+		bool      Silent(double a_now) const { return a_now - m_last > 5.0; }  // not playing: the room drifts, no judging
 
 	private:
 		struct Ev
