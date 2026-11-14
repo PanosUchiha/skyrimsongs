@@ -109,34 +109,8 @@ namespace InstrumentHud
 		const float yc = pos.y + H * 0.54f;
 		dl->PushClipRect(pos, pos + size, true);
 
-		// ---- the body: a rounded belly of pale spruce with a carved rosette, at the right
-		const float  bodyR = H * 0.95f;
-		const ImVec2 bodyC(pos.x + W - bodyR * 0.25f, yc);
-		for (int k = 14; k >= 0; --k) {
-			const float t = k / 14.0f;
-			dl->AddCircleFilled(bodyC, bodyR * (0.35f + 0.65f * t), Mix(Rgb(214, 178, 118), Rgb(120, 84, 44), t * t), 64);
-		}
-		dl->AddCircle(bodyC, bodyR - 2.0f * s, Rgb(60, 38, 20, 230), 96, 4.0f * s);
-		dl->AddCircle(bodyC, bodyR - 7.0f * s, Rgb(232, 214, 176, 120), 96, 1.2f * s);
-		// the rosette: a dark hole behind a carved lattice
-		const ImVec2 roseC(bodyC.x - bodyR * 0.42f, yc);
-		const float  roseR = H * 0.30f;
-		dl->AddCircleFilled(roseC, roseR, Rgb(26, 17, 9), 48);
-		for (int ring = 0; ring < 3; ++ring) {
-			const float rr = roseR * (0.35f + 0.28f * ring);
-			const int   n = 8 + ring * 6;
-			for (int i = 0; i < n; ++i) {
-				const float a = (i + 0.5f * ring) * 2.0f * kPi / n;
-				dl->AddCircle(roseC + ImVec2(std::cos(a), std::sin(a)) * rr, roseR * 0.13f, Rgb(196, 160, 102, 200), 12, 1.2f * s);
-			}
-			dl->AddCircle(roseC, rr, Rgb(160, 124, 74, 150), 48, 1.0f * s);
-		}
-		dl->AddCircle(roseC, roseR, Rgb(84, 56, 28), 48, 3.0f * s);
-		dl->AddCircle(roseC, roseR + 5.0f * s, Rgb(70, 46, 24, 200), 48, 1.5f * s);
-		dl->AddCircle(roseC, roseR + 9.0f * s, Rgb(232, 210, 168, 110), 48, 1.0f * s);
-
-		// ---- the neck: carved walnut, darker at the edges, with grain; widening toward the body
-		const float x0 = pos.x + 14.0f * s, x1 = roseC.x - roseR - 16.0f * s;
+		// ---- the neck runs the width of the panel, ending at a carved bridge block where the strings are tied
+		const float x0 = pos.x + 14.0f * s, x1 = pos.x + W - 64.0f * s;
 		const float hl = H * 0.38f, hr = H * 0.44f;
 		auto        topY = [&](float x) { return yc - (hl + (hr - hl) * (x - x0) / (x1 - x0)); };
 		auto        botY = [&](float x) { return yc + (hl + (hr - hl) * (x - x0) / (x1 - x0)); };
@@ -170,6 +144,31 @@ namespace InstrumentHud
 		dl->AddLine({ x0, botY(x0) }, { x1, botY(x1) }, Rgb(236, 226, 200, 160), 1.8f * s);
 		dl->AddRectFilled({ x0 - 2 * s, topY(x0) - 1 * s }, { x0 + 6 * s, botY(x0) + 1 * s }, Rgb(236, 226, 200), 2.0f * s);
 		dl->AddLine({ x0 + 6 * s, topY(x0) }, { x0 + 6 * s, botY(x0) }, Rgb(120, 100, 70, 200), 1.0f * s);
+
+		// ---- the end: a dark rosewood tie-block with an ivory saddle, the strings knotted over it
+		{
+			const float  bx0 = x1 + 8.0f * s, bx1 = x1 + 46.0f * s;
+			const float  by0 = topY(x1) - 4.0f * s, by1 = botY(x1) + 4.0f * s;
+			dl->AddRectFilled({ bx0 + 3 * s, by0 + 6 * s }, { bx1 + 3 * s, by1 + 6 * s }, Rgb(0, 0, 0, 110), 10.0f * s);
+			constexpr int kB = 10;
+			for (int k = 0; k < kB; ++k) {
+				const float t0 = k / static_cast<float>(kB), t1 = (k + 1) / static_cast<float>(kB);
+				auto        sh = [](float t) { return Mix(Rgb(104, 52, 30), Rgb(34, 16, 9), std::pow(std::abs(t - 0.38f) / 0.62f, 1.3f)); };
+				GradQuad(dl, { bx0, by0 + (by1 - by0) * t0 }, { bx1, by0 + (by1 - by0) * t0 }, { bx1, by0 + (by1 - by0) * t1 },
+					{ bx0, by0 + (by1 - by0) * t1 }, sh(t0), sh(t0), sh(t1), sh(t1));
+			}
+			dl->AddRect({ bx0, by0 }, { bx1, by1 }, Rgb(20, 10, 5, 220), 10.0f * s, 0, 1.5f * s);
+			// a carved bead along its face, and the ivory saddle the strings cross
+			dl->AddLine({ bx1 - 9 * s, by0 + 8 * s }, { bx1 - 9 * s, by1 - 8 * s }, Rgb(150, 86, 50, 150), 1.2f * s);
+			dl->AddRectFilled({ bx0 + 2 * s, by0 + 6 * s }, { bx0 + 8 * s, by1 - 6 * s }, Rgb(236, 226, 200), 2.0f * s);
+			dl->AddLine({ bx0 + 8 * s, by0 + 6 * s }, { bx0 + 8 * s, by1 - 6 * s }, Rgb(120, 100, 70, 200), 1.0f * s);
+			// a pair of brass rosettes, small, on the block's face
+			for (float fy : { 0.24f, 0.76f }) {
+				const ImVec2 c(bx1 - 20 * s, by0 + (by1 - by0) * fy);
+				dl->AddCircleFilled(c, 4.0f * s, Rgb(200, 160, 80), 16);
+				dl->AddCircleFilled(c - ImVec2(1 * s, 1 * s), 1.6f * s, Rgb(255, 230, 160), 12);
+			}
+		}
 
 		// ---- frets: eight places, each a little narrower than the last, as on a real neck
 		const float xa = x0 + 10.0f * s, xb = x1 - 8.0f * s;
@@ -225,9 +224,9 @@ namespace InstrumentHud
 			for (int k = 0; k < pair; ++k) {
 				const float yy = y + (pair == 2 ? (k == 0 ? -2.0f : 2.0f) * s : 0.0f);
 				// shadow on the wood
-				dl->AddLine({ x0, yy + 2.5f * s }, { x1 + 30 * s, yy + 2.5f * s }, Rgb(0, 0, 0, 90), thick);
+				dl->AddLine({ x0, yy + 2.5f * s }, { x1 + 26 * s, yy + 2.5f * s }, Rgb(0, 0, 0, 90), thick);
 				if (vib < 0.02f) {
-					dl->AddLine({ x0, yy }, { x1 + 30 * s, yy }, gut, thick);
+					dl->AddLine({ x0, yy }, { x1 + 26 * s, yy }, gut, thick);
 					continue;
 				}
 				// stopped at the fret, it shimmers from there to the bridge
@@ -238,7 +237,7 @@ namespace InstrumentHud
 				const float   tt = static_cast<float>(now) * 2.0f * kPi;
 				for (int i = 0; i < kN; ++i) {
 					const float u = i / (kN - 1.0f);
-					const float x = fretX + (x1 + 30 * s - fretX) * u;
+					const float x = fretX + (x1 + 26 * s - fretX) * u;
 					const float d = amp * (std::sin(kPi * u) * std::sin(tt * 13.0f + k) + 0.35f * std::sin(2 * kPi * u) * std::sin(tt * 26.0f + 1.3f));
 					pts[i] = { x, yy + d };
 				}
@@ -305,54 +304,57 @@ namespace InstrumentHud
 		const Cell  lastCell = last ? Place(last->pitch, base) : Cell{};
 		const float breath = last ? std::clamp(1.0f - last->age / 1.2f, 0.0f, 1.0f) : 0.0f;
 
-		// ---- the tube: polished silver, a bright highlight high on the curve, darker below
-		dl->AddRectFilled({ xL + 3 * s, yc - r + 6 * s }, { xR + 3 * s, yc + r + 6 * s }, Rgb(0, 0, 0, 100), r);
+		// ---- the tube: turned boxwood, honey-coloured, lit from above, with grain running its length
+		dl->AddRectFilled({ xL + 3 * s, yc - r + 6 * s }, { xR + 3 * s, yc + r + 6 * s }, Rgb(0, 0, 0, 110), r);
 		constexpr int kBands = 14;
-		auto          silver = [](float t) {
+		auto          wood = [](float t) {
             // t: 0 top edge .. 1 bottom edge
-            if (t < 0.22f) {
-                return Mix(Rgb(96, 104, 116), Rgb(250, 252, 255), t / 0.22f);
+            if (t < 0.25f) {
+                return Mix(Rgb(120, 74, 34), Rgb(232, 182, 112), t / 0.25f);
             }
-            if (t < 0.45f) {
-                return Mix(Rgb(250, 252, 255), Rgb(176, 184, 196), (t - 0.22f) / 0.23f);
+            if (t < 0.5f) {
+                return Mix(Rgb(232, 182, 112), Rgb(190, 132, 70), (t - 0.25f) / 0.25f);
             }
-            if (t < 0.8f) {
-                return Mix(Rgb(176, 184, 196), Rgb(112, 120, 132), (t - 0.45f) / 0.35f);
+            if (t < 0.82f) {
+                return Mix(Rgb(190, 132, 70), Rgb(126, 78, 36), (t - 0.5f) / 0.32f);
             }
-            return Mix(Rgb(112, 120, 132), Rgb(54, 60, 70), (t - 0.8f) / 0.2f);
+            return Mix(Rgb(126, 78, 36), Rgb(52, 30, 14), (t - 0.82f) / 0.18f);
 		};
 		for (int b = 0; b < kBands; ++b) {
 			const float t0 = b / static_cast<float>(kBands), t1 = (b + 1) / static_cast<float>(kBands);
 			const float y0 = yc - r + 2 * r * t0, y1 = yc - r + 2 * r * t1;
-			GradQuad(dl, { xL, y0 }, { xR, y0 }, { xR, y1 }, { xL, y1 }, silver(t0), silver(t0), silver(t1), silver(t1));
+			GradQuad(dl, { xL, y0 }, { xR, y0 }, { xR, y1 }, { xL, y1 }, wood(t0), wood(t0), wood(t1), wood(t1));
 		}
-		// a soft reflection of the room along the body
-		dl->AddLine({ xL + 10 * s, yc - r * 0.55f }, { xR - 10 * s, yc - r * 0.55f }, Rgb(255, 255, 255, 110), 1.5f * s);
-		dl->AddLine({ xL + 10 * s, yc + r * 0.55f }, { xR - 10 * s, yc + r * 0.55f }, Rgb(220, 230, 245, 40), 1.0f * s);
-		// the crown and the foot, and the joints
-		dl->AddRectFilled({ xL - 10 * s, yc - r * 0.92f }, { xL + 2 * s, yc + r * 0.92f }, Rgb(150, 158, 170), 4 * s);
-		dl->AddRectFilled({ xL - 14 * s, yc - r * 0.6f }, { xL - 8 * s, yc + r * 0.6f }, Rgb(200, 206, 214), 3 * s);
+		// grain, and the soft sheen of oiled wood
+		for (int g = 0; g < 9; ++g) {
+			const float t = (g + 0.5f) / 9.0f;
+			ImVec2      pts[64];
+			for (int i = 0; i < 64; ++i) {
+				const float x = xL + (xR - xL) * i / 63.0f;
+				pts[i] = { x, yc - r + 2 * r * t + std::sin(x * 0.011f / s + g * 2.1f) * 1.4f * s + std::sin(x * 0.037f / s + g) * 0.5f * s };
+			}
+			dl->AddPolyline(pts, 64, g % 2 ? Rgb(70, 38, 14, 45) : Rgb(255, 220, 160, 22), 0, (g % 3 == 0 ? 1.2f : 0.7f) * s);
+		}
+		dl->AddLine({ xL + 10 * s, yc - r * 0.52f }, { xR - 10 * s, yc - r * 0.52f }, Rgb(255, 236, 200, 70), 1.5f * s);
+		// horn rings at the ends and the joints, the cork end at the head
+		auto ring = [&](float rx0, float rx1, float grow) {
+			const float y0 = yc - r - grow, y1 = yc + r + grow;
+			GradQuad(dl, { rx0, y0 }, { rx1, y0 }, { rx1, yc }, { rx0, yc }, Rgb(60, 40, 26), Rgb(60, 40, 26), Rgb(150, 118, 84), Rgb(150, 118, 84));
+			GradQuad(dl, { rx0, yc }, { rx1, yc }, { rx1, y1 }, { rx0, y1 }, Rgb(150, 118, 84), Rgb(150, 118, 84), Rgb(30, 20, 12), Rgb(30, 20, 12));
+			dl->AddLine({ rx0, y0 + 1 }, { rx0, y1 - 1 }, Rgb(240, 220, 190, 90), 1.0f * s);
+			dl->AddLine({ rx1, y0 + 1 }, { rx1, y1 - 1 }, Rgb(20, 12, 6, 160), 1.0f * s);
+		};
+		dl->AddRectFilled({ xL - 9 * s, yc - r * 0.7f }, { xL + 2 * s, yc + r * 0.7f }, Rgb(150, 112, 70), 3 * s);
+		ring(xL, xL + 12 * s, 1.5f * s);
+		ring(xR - 12 * s, xR, 1.5f * s);
 		for (float jx : { xL + (xR - xL) * 0.25f, xR - (xR - xL) * 0.13f }) {
-			dl->AddRectFilled({ jx - 5 * s, yc - r - 1.5f * s }, { jx + 5 * s, yc + r + 1.5f * s }, Rgb(150, 158, 170), 2 * s);
-			dl->AddLine({ jx - 5 * s, yc - r }, { jx - 5 * s, yc + r }, Rgb(255, 255, 255, 140), 1.0f * s);
-			dl->AddLine({ jx + 5 * s, yc - r }, { jx + 5 * s, yc + r }, Rgb(40, 44, 52, 160), 1.0f * s);
+			ring(jx - 6 * s, jx + 6 * s, 2.0f * s);
 		}
-		// the lip plate and the embouchure hole
+		// the embouchure: an oval cut into the wood, the breath goes across it
 		const ImVec2 lipC(xL + 48.0f * s, yc);
-		{
-			const ImVec2 a = lipC - ImVec2(26 * s, r * 1.25f), b = lipC + ImVec2(26 * s, r * 1.25f);
-			dl->AddRectFilled(a + ImVec2(2 * s, 4 * s), b + ImVec2(2 * s, 4 * s), Rgb(0, 0, 0, 90), 12 * s);
-			dl->AddRectFilled(a, b, Rgb(120, 128, 140), 12 * s);
-			// the plate's own curve: bright along its upper edge, darker under
-			const float  inset = 3 * s;
-			const ImVec2 ia = a + ImVec2(inset, inset), ib = b - ImVec2(inset, inset);
-			const float  mid = ia.y + (ib.y - ia.y) * 0.3f;
-			GradQuad(dl, ia, { ib.x, ia.y }, { ib.x, mid }, { ia.x, mid }, Rgb(196, 204, 214), Rgb(196, 204, 214), Rgb(250, 252, 255), Rgb(250, 252, 255));
-			GradQuad(dl, { ia.x, mid }, { ib.x, mid }, ib, { ia.x, ib.y }, Rgb(250, 252, 255), Rgb(250, 252, 255), Rgb(150, 158, 170), Rgb(150, 158, 170));
-			dl->AddRect(a, b, Rgb(90, 98, 110), 12 * s, 0, 1.2f * s);
-		}
-		dl->AddEllipseFilled(lipC, { 11 * s, 6.5f * s }, Rgb(18, 20, 26), 0.0f, 24);
-		dl->AddEllipse(lipC, { 11 * s, 6.5f * s }, Rgb(250, 252, 255, 160), 0.0f, 24, 1.0f * s);
+		dl->AddEllipseFilled(lipC + ImVec2(0, 1 * s), { 12 * s, 7 * s }, Rgb(90, 52, 22, 200), 0.0f, 24);
+		dl->AddEllipseFilled(lipC, { 10 * s, 5.8f * s }, Rgb(16, 9, 4), 0.0f, 24);
+		dl->AddEllipse(lipC, { 10.5f * s, 6.2f * s }, Rgb(255, 222, 170, 110), 0.0f, 24, 1.0f * s);
 
 		// the breath: wisps of air curling off the mouthpiece while a note sounds
 		if (breath > 0.0f) {
@@ -360,15 +362,13 @@ namespace InstrumentHud
 				const float ph = static_cast<float>(std::fmod(now * 0.9 + i / 7.0, 1.0));
 				const float x = lipC.x - 6 * s - ph * 34 * s + std::sin(ph * 9.0f + i) * 4 * s;
 				const float y = lipC.y - 10 * s - ph * 22 * s;
-				dl->AddCircleFilled({ x, y }, (2.0f + 5.0f * ph) * s, Rgb(210, 230, 255, static_cast<int>(70 * breath * (1.0f - ph))), 16);
+				dl->AddCircleFilled({ x, y }, (2.0f + 5.0f * ph) * s, Rgb(230, 236, 245, static_cast<int>(60 * breath * (1.0f - ph))), 16);
 			}
 		}
 
-		// ---- the keywork: a rod along the top, seven tone holes, the I trill key at the foot
+		// ---- seven finger holes drilled into the wood, a small half-hole beside each for its sharp, the I hole at the foot
 		const float hx0 = xL + (xR - xL) * 0.34f, hx1 = xR - (xR - xL) * 0.18f;
 		auto        holeX = [&](int c) { return hx0 + (hx1 - hx0) * c / 6.0f; };
-		dl->AddLine({ hx0 - 20 * s, yc - r * 0.95f }, { xR - 30 * s, yc - r * 0.95f }, Rgb(232, 236, 242, 200), 2.0f * s);
-		dl->AddLine({ hx0 - 20 * s, yc - r * 0.95f + 2 * s }, { xR - 30 * s, yc - r * 0.95f + 2 * s }, Rgb(60, 66, 76, 140), 1.0f * s);
 		for (int c = 0; c <= 7; ++c) {
 			const bool  trill = c == 7;
 			const float x = trill ? xR - (xR - xL) * 0.06f : holeX(c);
@@ -379,27 +379,25 @@ namespace InstrumentHud
 					(cell.sharp ? sharpLit : lit) = (std::max)(cell.sharp ? sharpLit : lit, LitOf(n.age));
 				}
 			}
-			const ImVec2 hc(x, yc + r * 0.1f);
-			const float  cupR = trill ? r * 0.42f : r * 0.66f;
-			// the post holding the key
-			dl->AddLine({ x, yc - r * 0.95f }, { x, hc.y - cupR }, Rgb(200, 206, 214), 2.0f * s);
-			Glow(dl, hc, cupR, Rgb(255, 214, 120), lit);
-			dl->AddCircleFilled(hc + ImVec2(0, 2 * s), cupR + 2 * s, Rgb(0, 0, 0, 90), 32);
-			dl->AddCircleFilled(hc, cupR + 2 * s, Rgb(236, 240, 246), 32);
-			dl->AddCircleFilled(hc, cupR, Rgb(104, 112, 124), 32);
-			dl->AddCircleFilled(hc, cupR * 0.72f, Mix(Rgb(20, 22, 28), Rgb(255, 218, 128), lit), 32);
-			dl->AddCircle(hc, cupR * 0.72f, Rgb(250, 252, 255, 120), 32, 1.0f * s);
+			const ImVec2 hc(x, yc - r * 0.05f);
+			const float  holeR = trill ? r * 0.36f : r * 0.52f;
+			Glow(dl, hc, holeR, Rgb(255, 210, 120), lit);
+			// the bevelled rim, lighter where the light catches its lower lip
+			dl->AddCircleFilled(hc, holeR + 3.0f * s, Rgb(110, 66, 28, 220), 32);
+			dl->AddCircle(hc + ImVec2(0, 1.2f * s), holeR + 2.0f * s, Rgb(255, 222, 160, 120), 32, 1.2f * s);
+			dl->AddCircleFilled(hc, holeR, Mix(Rgb(18, 10, 4), Rgb(255, 214, 124), lit), 32);
+			dl->AddCircle(hc, holeR, Rgb(40, 22, 8, 220), 32, 1.2f * s);
 			// the note's name, over the hole while it sounds
 			if (last && (std::max)(lit, sharpLit) > 0.0f && (trill ? lastCell.col == 7 : lastCell.col == c)) {
 				Label(dl, f.label, { x, yc - r - 14.0f * s }, Rgb(255, 226, 150, static_cast<int>(255 * (std::max)(lit, sharpLit))),
 					music::NoteName(last->pitch));
 			}
 			if (!trill && c != 2 && c != 6) {
-				// the small key that gives the sharp
-				const ImVec2 sc(x + cupR + 9 * s, hc.y - cupR * 0.4f);
-				Glow(dl, sc, 4.0f * s, Rgb(255, 214, 120), sharpLit);
-				dl->AddEllipseFilled(sc, { 5.0f * s, 3.4f * s }, Mix(Rgb(200, 206, 214), Rgb(255, 220, 130), sharpLit), 0.0f, 16);
-				dl->AddEllipse(sc, { 5.0f * s, 3.4f * s }, Rgb(80, 86, 96, 180), 0.0f, 16, 1.0f * s);
+				// the small hole that gives the sharp
+				const ImVec2 sc(x + holeR + 12 * s, hc.y + r * 0.25f);
+				Glow(dl, sc, 4.0f * s, Rgb(255, 210, 120), sharpLit);
+				dl->AddCircleFilled(sc, 5.0f * s, Rgb(110, 66, 28, 220), 16);
+				dl->AddCircleFilled(sc, 3.4f * s, Mix(Rgb(18, 10, 4), Rgb(255, 214, 124), sharpLit), 16);
 			}
 			// the three letters for this hole, one per register: high, middle, low
 			const float ly = yc + r + 20.0f * s;
@@ -414,7 +412,7 @@ namespace InstrumentHud
 				if (on > 0.0f) {
 					dl->AddRectFilled({ x - 12 * s, yy - 10 * s }, { x + 12 * s, yy + 10 * s }, Rgb(255, 214, 120, static_cast<int>(60 * on)), 4 * s);
 				}
-				Label(dl, f.key, { x, yy }, Mix(row == 1 ? Rgb(214, 222, 234) : Rgb(132, 142, 158), Rgb(255, 226, 150), on), std::string(1, letter));
+				Label(dl, f.key, { x, yy }, Mix(row == 1 ? Rgb(236, 222, 196) : Rgb(150, 136, 114), Rgb(255, 226, 150), on), std::string(1, letter));
 			}
 		}
 		// the registers, and the breath gauge
@@ -422,14 +420,14 @@ namespace InstrumentHud
 		const float ly = yc + r + 20.0f * s;
 		for (int row = 2; row >= 0; --row) {
 			const bool on = last && breath > 0.0f && lastCell.row == row;
-			Label(dl, f.label, { pos.x + 30 * s, ly + (2 - row) * 21.0f * s }, on ? Rgb(255, 226, 150) : Rgb(150, 160, 176), kReg[row]);
+			Label(dl, f.label, { pos.x + 30 * s, ly + (2 - row) * 21.0f * s }, on ? Rgb(255, 226, 150) : Rgb(170, 154, 130), kReg[row]);
 		}
 		const ImVec2 g0(pos.x + 64 * s, ly - 9 * s), g1(pos.x + 70 * s, ly + 2 * 21.0f * s + 9 * s);
-		dl->AddRectFilled(g0, g1, Rgb(30, 34, 42, 220), 3 * s);
+		dl->AddRectFilled(g0, g1, Rgb(40, 28, 18, 220), 3 * s);
 		const float gh = (g1.y - g0.y) * breath;
-		GradQuad(dl, { g0.x, g1.y - gh }, { g1.x, g1.y - gh }, g1, { g0.x, g1.y }, Rgb(220, 236, 255), Rgb(220, 236, 255), Rgb(120, 160, 220),
-			Rgb(120, 160, 220));
-		dl->AddRect(g0, g1, Rgb(150, 160, 176, 160), 3 * s, 0, 1.0f * s);
+		GradQuad(dl, { g0.x, g1.y - gh }, { g1.x, g1.y - gh }, g1, { g0.x, g1.y }, Rgb(255, 226, 150), Rgb(255, 226, 150), Rgb(190, 130, 60),
+			Rgb(190, 130, 60));
+		dl->AddRect(g0, g1, Rgb(200, 160, 100, 160), 3 * s, 0, 1.0f * s);
 		dl->PopClipRect();
 	}
 }
