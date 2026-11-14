@@ -21,7 +21,7 @@ namespace Config
 		bool  showKeyboard = true;        // the key guide at the bottom of the screen
 
 		// The crowd
-		float listenRange = 1500.0f;  // how far you can be heard (game units; 70 is about a metre)
+		float listenRange = 700.0f;   // how far you can be heard (game units; 70 is about a metre, so about 10 m)
 		float tipRate = 1.0f;
 		float tipSize = 1.0f;
 		int   maxTipPerListener = 40;  // gold one patron gives in one performance at most
