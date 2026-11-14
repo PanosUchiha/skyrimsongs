@@ -3,7 +3,7 @@
 Play the lute and flute for real in Skyrim SE, AE and GOG: take out your instrument anywhere, play it with the
 computer keyboard or a USB MIDI keyboard, and whoever's in earshot listens. Play well and they toss you coins;
 play badly and they heckle. In an inn, a bad enough set gets you thrown out (and you're not welcome back that day).
-Put your own MIDI files in a folder to play along with them, or to let them play themselves (the cheat).
+Put your own MIDI files in a folder and let them play themselves (the cheat).
 
 Status: **first version, not yet tried in game.**
 
@@ -26,10 +26,8 @@ Status: **first version, not yet tried in game.**
 - **The songbook** (**Tab**, **Esc** to close): switch instrument, go back to free play, or pick a song: five built-in public-domain
   tunes (Ode to Joy, Amazing Grace, Scarborough Fair, Drunken Sailor, Greensleeves) and every `.mid` in
   `Data\SKSE\Plugins\SkyrimSongs\Songs`.
-  - **Play along:** after a three-tick count-in the tune slides along three lanes (the keyboard's rows) to a line,
-    each note labelled with its key (`+` = Shift). Within 70 ms is perfect, 160 ms good; any octave counts, so a
-    MIDI keyboard works at any octave. The speed can be lowered to 50%.
-  - **Let it play:** the whole file plays itself on your instrument, perfectly; the crowd hears a great bard.
+  - **Play:** the whole song plays itself on your instrument, perfectly, with no input (the note keys rest until
+    it ends or Esc stops it); the crowd hears a great bard. Otherwise it's free play.
 
 ## The crowd
 
@@ -37,13 +35,13 @@ Every half second the plugin finds the people within earshot (`ListenRange`, the
 not hostile, not fighting, not asleep, not children, people not animals). Each has a mood, a taste (how hard to
 please) and a purse.
 
-- **How well you're playing** (0-1): playing along, a running average of your hits and misses. Free play is judged
+- **How well you're playing** (0-1): a song from the songbook counts as great playing. Free play is judged
   on the last eight seconds: rhythm (do the gaps between notes fit a steady beat and its halves and doubles?), key
   (the share of notes in the best-fitting major or harmonic minor scale), melody (steps and small leaps score,
   big jumps don't), pace (enough notes, not mashing) and variety, and a long silence loses the room.
 - **Moods** drift up or down with that; tips come faster and bigger the happier a listener is, the deeper their
   purse and the better your Speech, capped per listener per performance (`MaxTipPerListener`). Unhappy listeners
-  heckle; delighted ones cheer; a good play-along ends in applause and a collection. You get Speech experience
+  heckle; delighted ones cheer; a song from the songbook ends in applause and a collection. You get Speech experience
   for what you earn.
 - **Thrown out:** in an inn (an innkeeper in the room, or a location with the inn keyword) a room that stays
   hostile gets a warning from the innkeeper, then you're put out through the nearest door that leads outside and

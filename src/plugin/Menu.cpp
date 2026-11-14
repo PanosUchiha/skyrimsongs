@@ -155,14 +155,6 @@ namespace Menu
 				Audio::SetReverb(v.reverb);
 				g_dirty = true;
 			}
-			UI::SeparatorText("Playing along");
-			float speed = v.speed * 100.0f;
-			if (UI::SliderFloat("Song speed", &speed, 50.0f, 100.0f, "%.0f%%")) {
-				v.speed = speed / 100.0f;
-				g_dirty = true;
-			}
-			Changed(UI::SliderInt("Timing correction", &v.latencyMs, -200, 200, "%d ms"));
-			Hint("If every note you play is judged late, raise this; early, lower it.");
 			UI::SeparatorText("Screen");
 			Changed(UI::Checkbox("Show the key guide", &v.showKeyboard));
 			Changed(UI::SliderFloat("Interface size", &v.uiScale, 0.6f, 1.6f, "%.2f"));

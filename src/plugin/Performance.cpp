@@ -572,7 +572,7 @@ namespace Performance
 			g_song.all = notes;
 			g_act = Act::Auto;
 			Audio::PlaySong(notes, g_inst, 1.0f, 1.0, true);
-			Say(fmt::format("The music plays itself: {}", g_song.title), kDim);
+			Say(fmt::format("You play {}.", g_song.title), kDim);
 			spdlog::info("Let it play: {} ({} notes)", g_song.title, notes.size());
 		}
 
@@ -909,7 +909,7 @@ namespace Performance
 			if (g_idleAt > 0.0 && now >= g_idleAt) {
 				RunIdle();
 			}
-			g_midiLive = Overlay::GetMode() == Overlay::Mode::Playing;
+			g_midiLive = Overlay::GetMode() == Overlay::Mode::Playing && g_act != Act::Auto;
 			{
 				std::vector<MidiHit> hits;
 				{
@@ -1057,7 +1057,7 @@ namespace Performance
 
 			// the header: instrument and what you're doing, the room, your earnings
 			float y = p0.y + 8.0f * s;
-			std::string what = g_act == Act::Free ? "Free play" : g_act == Act::Along ? "Playing along: " + g_song.title : "The music plays itself: " + g_song.title;
+			std::string what = g_act == Act::Free ? "Free play" : g_act == Act::Along ? "Playing along: " + g_song.title : "Playing: " + g_song.title;
 			Text(dl, F.book, { p0.x + 16.0f * s, y }, kGoldCol, fmt::format("{}  ·  {}", music::InstrumentName(g_inst), what));
 			{
 				const double mood = g_crowd.Mood();
@@ -1235,17 +1235,12 @@ namespace Performance
 				ImGui::TextDisabled("%zu notes", a_e.song.melody.size());
 			}
 			ImGui::TableNextColumn();
-			if (ImGui::Button("Play along", ImVec2(120.0f * s, 0))) {
-				StartAlong(a_e.song);
-				Overlay::SetMode(Overlay::Mode::Playing);
-			}
-			ImGui::SameLine();
-			if (ImGui::Button("Let it play", ImVec2(110.0f * s, 0))) {
+			if (ImGui::Button("Play", ImVec2(110.0f * s, 0))) {
 				StartAuto(a_e.song);
 				Overlay::SetMode(Overlay::Mode::Playing);
 			}
 			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("The cheat: the song plays itself, perfectly.\nThe crowd won't know.");
+				ImGui::SetTooltip("The song plays itself on your instrument, perfectly.\nThe crowd won't know.");
 			}
 			ImGui::PopID();
 		}
@@ -1305,7 +1300,7 @@ namespace Performance
 				ImGui::TableSetupColumn("Song", ImGuiTableColumnFlags_WidthStretch, 3.0f);
 				ImGui::TableSetupColumn("Length", ImGuiTableColumnFlags_WidthStretch, 0.8f);
 				ImGui::TableSetupColumn("Difficulty", ImGuiTableColumnFlags_WidthStretch, 0.9f);
-				ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 245.0f * s);
+				ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 125.0f * s);
 				int id = 0;
 				for (const auto& e : g_builtIn) {
 					SongRow(e, id++);
@@ -1326,12 +1321,6 @@ namespace Performance
 			// settings and leaving
 			auto& cfg = Config::Edit();
 			ImGui::SetNextItemWidth(220.0f * s);
-			float speed = cfg.speed * 100.0f;
-			if (ImGui::SliderFloat("Play-along speed", &speed, 50.0f, 100.0f, "%.0f%%")) {
-				cfg.speed = speed / 100.0f;
-			}
-			ImGui::SameLine(0.0f, 30.0f * s);
-			ImGui::SetNextItemWidth(180.0f * s);
 			if (ImGui::SliderFloat("Volume", &cfg.volume, 0.0f, 2.0f, "%.2f")) {
 				Audio::SetVolume(cfg.volume);
 			}
@@ -1453,9 +1442,9 @@ namespace Performance
 			}
 			return;
 		}
-		// a note key
+		// a note key (while a song plays itself, the note keys rest)
 		if (a_down) {
-			const int pitch = music::keymap::Pitch(a_scan, Base(), g_shiftL || g_shiftR);
+			const int pitch = g_act == Act::Auto ? -1 : music::keymap::Pitch(a_scan, Base(), g_shiftL || g_shiftR);
 			if (pitch >= 0) {
 				if (auto it = g_keyPitch.find(a_scan); it != g_keyPitch.end()) {
 					Unsound(it->second);

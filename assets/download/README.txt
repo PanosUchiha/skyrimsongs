@@ -19,12 +19,12 @@ How to play
         Z X C V B N M      low        (C D E F G A B)
     Hold Shift for the sharp (the black key above). Up / Down arrows move every row an octave.
   - A MIDI keyboard plugged in before you take out your instrument just works (velocity and the sustain pedal too).
-  - Tab opens the songbook (Esc closes it): switch instrument, play along with a song (the notes slide to the line with the key to
-    press), or let a song play itself (the cheat). Esc stops a song; Esc again puts the instrument away.
+  - Tab opens the songbook (Esc closes it): switch instrument, or pick a song and press Play: it plays itself on
+    your instrument, perfectly, with no input (the cheat). Esc stops a song; Esc again puts the instrument away.
   - Your MIDI files: put .mid files in Data\SKSE\Plugins\SkyrimSongs\Songs.
 
 The crowd judges free play on rhythm (a steady beat), key (staying in one scale), melody (steps and small leaps,
-not random jumps), pace and variety; playing along, on hitting each note in time. Tips come faster and bigger the
+not random jumps), pace and variety; a song from the songbook always goes down well. Tips come faster and bigger the
 happier the room and the better your Speech; you gain Speech experience for what you earn.
 
 Settings: in game with SKSE Menu Framework (Mod Control Panel > Skyrim Songs), or Data\SKSE\Plugins\SkyrimSongs.ini.
