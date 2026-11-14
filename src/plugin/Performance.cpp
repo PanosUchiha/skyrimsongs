@@ -1095,6 +1095,61 @@ namespace Performance
 			g_inInn = interior && (g_keeper != 0 || innLoc);
 		}
 
+		// The Bards College, from the game's own quests: a member after Tending the Flames, and the instruments you
+		// brought back (Finn's Lute, Pantea's Flute, Rjorn's Drum)
+		struct College
+		{
+			bool member = false;
+			bool lute = false, flute = false, drum = false;
+			int  Returned() const { return (lute ? 1 : 0) + (flute ? 1 : 0) + (drum ? 1 : 0); }
+		};
+
+		College CollegeStanding()
+		{
+			auto done = [](const char* a_id, std::uint16_t a_stage) {
+				auto* q = RE::TESForm::LookupByEditorID<RE::TESQuest>(a_id);
+				return q && (q->IsCompleted() || (a_stage && q->GetCurrentStageID() >= a_stage));
+			};
+			College c;
+			c.member = done("MS05", 300);
+			c.lute = done("BardsCollegeLute", 0);
+			c.flute = done("BardsCollegeFlute", 0);
+			c.drum = done("BardsCollegeDrum", 0);
+			return c;
+		}
+		College g_college;  // looked up when you take your instrument out
+
+		// The College's own people, by name: they say what a teacher would
+		struct Teacher
+		{
+			const char*              name;
+			std::vector<std::string> praise, scold;
+		};
+		const Teacher* TeacherOf(const std::string& a_name)
+		{
+			static const std::vector<Teacher> kTeachers = {
+				{ "Viarmo", { "Splendid! The College could use more like you.", "That's how it's done. Remember that feeling.", "Olaf himself would have stopped to listen." },
+					{ "No, no, no. Again, from the top.", "You embarrass the College with that.", "Have you been practising at all?" } },
+				{ "Inge Six Fingers", { "Hmph. Not bad. There's feeling in it.", "Your fingers know the way. Finally.", "Finn would have smiled at that." },
+					{ "Your fingering's sloppy. Start past four and it shows.", "That's not a lute, that's a hen house.", "Mind your courses, they're buzzing." } },
+				{ "Pantea Ateia", { "Lovely breath. You listened to me.", "Now that is a flute singing.", "Yes! Let it float." },
+					{ "Breathe from the belly, not the chest!", "You're blowing, not playing.", "Mind your embouchure, it's all air." } },
+				{ "Giraud Gemane", { "A fine performance. Worth writing about.", "Now that has a story in it.", "Bravo, bravo." },
+					{ "Even history wouldn't record that.", "Perhaps stick to the written word.", "Hm. Interesting choices." } },
+				{ "Jorn", { "Ha! You'll take my spot at the Festival.", "Now that's a song!", "Play that again tonight!" },
+					{ "Even I've heard better at the Winking Skeever.", "Easy there, you'll wake the dead.", "Rough night?" } },
+				{ "Aia Arria", { "That was beautiful.", "I'd love to learn that one.", "You make it look easy." }, { "Oh. Oh dear.", "Maybe a little softer?", "Was that on purpose?" } },
+				{ "Illdi", { "Oh, that's lovely!", "I hope my piece sounds half as good.", "You have to teach me that!" }, { "Um... was that the classic?", "Inge would have words.", "Oof." } },
+				{ "Ataf", { "Good. Very good.", "Your rhythm is strong.", "That one moves the feet." }, { "Lost the beat there.", "Slower. Feel it first.", "Again, with a steadier hand." } },
+			};
+			for (const auto& t : kTeachers) {
+				if (a_name == t.name) {
+					return &t;
+				}
+			}
+			return nullptr;
+		}
+
 		std::string NameOf(std::uint32_t a_id)
 		{
 			auto it = g_names.find(a_id);
@@ -1106,8 +1161,19 @@ namespace Performance
 			g_tipped[a_id] = RE::Calendar::GetSingleton() ? RE::Calendar::GetSingleton()->GetDaysPassed() : 0.0f;
 		}
 
-		void HandleCrowd(const std::vector<music::CrowdEvent>& a_events)
+		void HandleCrowd(const std::vector<music::CrowdEvent>& a_eventsIn)
 		{
+			// the College's teachers speak as teachers
+			std::vector<music::CrowdEvent> a_events = a_eventsIn;
+			for (auto& e : a_events) {
+				if (const auto* t = TeacherOf(NameOf(e.id))) {
+					if (e.kind == music::CrowdEvent::Kind::Heckle) {
+						e.line = PickOf(t->scold);
+					} else if (e.kind == music::CrowdEvent::Kind::Cheer || e.kind == music::CrowdEvent::Kind::Tip) {
+						e.line = PickOf(t->praise);
+					}
+				}
+			}
 			for (const auto& e : a_events) {
 				switch (e.kind) {
 				case music::CrowdEvent::Kind::Tip:
@@ -1257,10 +1323,11 @@ namespace Performance
 			const int              tier = Tier(g_inst);
 			music::Crowd::Settings cs;
 			cs.tipRate = c.tipRate * (1.0f + 0.4f * f);
-			cs.tipSize = c.tipSize * (1.0f + 0.3f * f) * (1.0f + 0.15f * tier);
+			const float college = (g_college.member ? 0.10f : 0.0f) + 0.03f * g_college.Returned();
+			cs.tipSize = c.tipSize * (1.0f + 0.3f * f) * (1.0f + 0.15f * tier) * (1.0f + college);
 			cs.maxPerListener = c.maxTipPerListener;
 			cs.patience = c.patience * (1.0f - 0.3f * f) * (1.0f - 0.1f * tier);
-			cs.welcome = 0.15f * f + 0.03f * tier;
+			cs.welcome = 0.15f * f + 0.03f * tier + (g_college.member ? 0.04f : 0.0f);
 			cs.oneTipEach = true;  // and once a day: see g_tipped
 			g_crowd.SetSettings(cs);
 			g_tierNow[0] = Tier(Instrument::Lute);
@@ -1354,6 +1421,7 @@ namespace Performance
 			}
 			g_moodSum = g_heardFor = 0.0;
 			g_thrown = false;
+			g_college = CollegeStanding();
 			ApplyCrowdSettings();
 			g_names.clear();
 			g_feed.clear();
@@ -1613,7 +1681,7 @@ namespace Performance
 					Say(fmt::format("{}: \"Play something decent or get out!\"", keeper), kRed);
 					Hud(fmt::format("{}: \"Play something decent or get out!\"", keeper));
 				}
-				if (g_badFor > 11.0) {
+				if (g_badFor > (g_college.member ? 16.0 : 11.0)) {  // a College bard gets a little longer
 					ThrowOut();
 				}
 			}
@@ -1988,17 +2056,37 @@ namespace Performance
 										  "Empty one (or get thrown out) and it goes the other way. It fades as the days pass.");
 					}
 				}
+				ImGui::SameLine(0.0f, 30.0f * s);
+				if (g_college.member) {
+					ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.45f, 1.0f), "Bard of the College");
+					if (ImGui::IsItemHovered()) {
+						ImGui::SetTooltip("A member of the Bards College: rooms take you more seriously (warmer welcome, better tips), innkeepers give you longer\n"
+										  "before they lose patience, and the College's luthier gives you the members' price.%s",
+							g_college.Returned() > 0 ? fmt::format("\nYou brought back {} of the College's lost instruments: word of it follows you.", g_college.Returned()).c_str() : "");
+					}
+				} else {
+					ImGui::TextDisabled("Not of the College");
+					if (ImGui::IsItemHovered()) {
+						ImGui::SetTooltip("Join the Bards College in Solitude (Tending the Flames) and rooms take you more seriously.");
+					}
+				}
 				// the Bards College's luthier refits instruments
 				if (AtTheCollege()) {
 					const int k = g_inst == Instrument::Lute ? 0 : 1;
 					if (g_refit[k] < 2 && t < 2) {
 						const int  next = g_refit[k] + 1;
-						const int  price = next == 1 ? kRefitFine : kRefitMaster;
+						const bool gift = next == 1 && (k == 0 ? g_college.lute : g_college.flute);  // thanks for bringing hers back
+						const int  price = gift ? 0 : static_cast<int>((next == 1 ? kRefitFine : kRefitMaster) * (g_college.member ? 0.75 : 1.0));
 						const int  have = GoldOf(Player());
 						ImGui::BeginDisabled(have < price);
-						if (ImGui::Button(fmt::format("Have the College refit your {} ({}): {} septims", InstName(g_inst), next == 1 ? "fine" : "masterwork", price).c_str())) {
+						const std::string label = gift ? fmt::format("{} will refit your {} (fine) for free, for bringing hers back", k == 0 ? "Inge" : "Pantea", InstName(g_inst)) :
+						                                 fmt::format("Have the College refit your {} ({}): {} septims{}", InstName(g_inst), next == 1 ? "fine" : "masterwork", price,
+															 g_college.member ? " (members' price)" : "");
+						if (ImGui::Button(label.c_str())) {
 							if (auto* p = Player(); p && g_gold) {
-								p->RemoveItem(g_gold, price, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+								if (price > 0) {
+									p->RemoveItem(g_gold, price, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+								}
 								g_refit[k] = next;
 								ApplyCrowdSettings();
 								Say(fmt::format("The College's luthier refits your {}. It's {} now.", InstName(g_inst), next == 1 ? "a fine one" : "a masterwork"), kGoldCol);
