@@ -625,6 +625,17 @@ namespace Performance
 			return proc && proc->PlayIdle(a_actor, a_idle, nullptr);
 		}
 
+		// turn to you first: an idle plays the way the actor faces, and many were facing away
+		void FacePlayer(RE::Actor* a_actor)
+		{
+			auto* player = Player();
+			if (!a_actor || !player) {
+				return;
+			}
+			const auto at = a_actor->GetPosition(), me = player->GetPosition();
+			a_actor->SetHeading(std::atan2(me.x - at.x, me.y - at.y));  // Skyrim's heading: 0 = north (+y), clockwise
+		}
+
 		template <class T>
 		const T& PickOf(const std::vector<T>& a_v)
 		{
@@ -637,6 +648,7 @@ namespace Performance
 			if (!a || !Config::Get().reactions) {
 				return;
 			}
+			FacePlayer(a);
 			switch (a_kind) {
 			case 0:
 				NpcIdle(a, g_give);
@@ -712,9 +724,7 @@ namespace Performance
 				if (std::hypot(at.x - v.spot.x, at.y - v.spot.y) < 70.0f) {
 					v.arrived = true;
 					Call(a, "SetDontMove", true);
-					const auto  me = player->GetPosition();
-					const float deg = std::atan2(me.x - at.x, me.y - at.y) * 180.0f / 3.14159265f;
-					Call(a, "SetAngle", 0.0f, 0.0f, deg);
+					FacePlayer(a);
 					Call(a, "SetLookAt", static_cast<RE::TESObjectREFR*>(player), false);
 					g_nextMove[v.id] = now + 3.0;
 				}
