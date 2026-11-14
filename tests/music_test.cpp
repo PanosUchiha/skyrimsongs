@@ -157,6 +157,15 @@ namespace
 				CHECK(out == 0);
 			}
 		}
+		// folding a wide arrangement onto the 37 keys
+		{
+			std::vector<Note> wide = { { 0.0, 1.0, 24, 90, 0, 0 }, { 0.0, 1.0, 36, 90, 0, 0 }, { 0.5, 1.0, 100, 90, 0, 0 }, { 1.0, 1.0, 60, 90, 0, 0 } };
+			const auto        f = FoldIntoRange(wide, 36);
+			CHECK(f.size() == 3);  // the 24 folds onto the 36 already there
+			for (const auto& x : f) {
+				CHECK(x.pitch >= 36 && x.pitch <= 72);
+			}
+		}
 		std::vector<Note> n;
 		CHECK(!ParseNotation("C4:1 X9:1", 120, n));
 		CHECK(ParseNotation("C4:1 r:1 D#4:.5", 120, n) && n.size() == 2 && n[1].pitch == 63 && std::abs(n[1].start - 1.0) < 1e-9);

@@ -569,6 +569,11 @@ namespace Performance
 			for (auto& n : notes) {
 				n.pitch += g_songShift;
 			}
+			// everything onto the instrument's 37 keys: a bass line or a high part played outside them doesn't
+			// sound like a lute or a flute any more
+			const std::size_t before = notes.size();
+			notes = music::FoldIntoRange(notes, g_inst == Instrument::Lute ? 36 : 60);
+			spdlog::info("  {} notes moved into the {}'s range, {} doubled ones dropped", before, InstName(g_inst), before - notes.size());
 			g_song.all = notes;
 			g_act = Act::Auto;
 			Audio::PlaySong(notes, g_inst, 1.0f, 1.0, true);

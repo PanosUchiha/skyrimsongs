@@ -169,6 +169,31 @@ namespace music
 		return true;
 	}
 
+	std::vector<Note> FoldIntoRange(const std::vector<Note>& a_notes, int a_low)
+	{
+		std::vector<Note> out;
+		out.reserve(a_notes.size());
+		for (auto n : a_notes) {
+			while (n.pitch < a_low) {
+				n.pitch += 12;
+			}
+			while (n.pitch > a_low + 36) {
+				n.pitch -= 12;
+			}
+			bool doubled = false;
+			for (std::size_t i = out.size(); i-- > 0 && out.size() - i <= 32;) {  // the notes just before (sorted by start)
+				if (out[i].pitch == n.pitch && std::abs(out[i].start - n.start) < 0.02) {
+					doubled = true;
+					break;
+				}
+			}
+			if (!doubled) {
+				out.push_back(n);
+			}
+		}
+		return out;
+	}
+
 	int FitOctaves(const std::vector<Note>& a_melody, int a_low, int a_span)
 	{
 		int bestShift = 0, bestIn = -1;

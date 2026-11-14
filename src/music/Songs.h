@@ -33,5 +33,10 @@ namespace music
 	// [a_low, a_low + a_span]
 	int FitOctaves(const std::vector<Note>& a_melody, int a_low, int a_span);
 
+	// Every note moved by whole octaves into [a_low, a_low + 36] (the instrument's 37 keys), so a bass line or a
+	// high descant still plays on the instrument instead of far outside its range; notes that then double one
+	// already sounding (the same pitch at the same moment) are dropped.
+	std::vector<Note> FoldIntoRange(const std::vector<Note>& a_notes, int a_low);
+
 	std::string NoteName(int a_pitch);  // "C#4"
 }
