@@ -1369,6 +1369,42 @@ namespace Performance
 			}
 		}
 
+		// ---- Bard ranks: earned as a member of the College, from its notices, the towns that admire you, the songs
+		// that are yours somewhere and the nights you've played
+		struct Rank
+		{
+			int         level;     // 0 not of the College, 1 Apprentice .. 4 Master Bard
+			int         score;
+			int         next;      // the score the next rank needs (0 at the top)
+			const char* name;
+		};
+		int g_rankSeen = 0;  // the highest rank you've been told about (saved)
+
+		Rank RankNow()
+		{
+			int admired = 0, signatures = 0;
+			for (const auto& [town, f] : g_fame) {
+				admired += FameIn(town) >= 0.35f ? 1 : 0;
+			}
+			for (const auto& [town, songs] : g_signature) {
+				signatures += SignatureIn(town).empty() ? 0 : 1;
+			}
+			const int score = g_collegeShows * 2 + admired * 3 + signatures * 2 + (std::min)(g_performances / 10, 5);
+			if (!g_college.member) {
+				return { 0, score, 0, "Busker" };
+			}
+			if (score >= 30 && g_collegeShows >= 5) {
+				return { 4, score, 0, "Master Bard" };
+			}
+			if (score >= 18) {
+				return { 3, score, 30, "Bard" };
+			}
+			if (score >= 8) {
+				return { 2, score, 18, "Journeyman" };
+			}
+			return { 1, score, 8, "Apprentice" };
+		}
+
 		// the room's temper: your settings, your name in this town, and how fine your instrument is
 		void ApplyCrowdSettings()
 		{
@@ -1383,6 +1419,11 @@ namespace Performance
 			cs.patience = c.patience * (1.0f - 0.3f * f) * (1.0f - 0.1f * tier);
 			cs.welcome = 0.15f * f + 0.03f * tier + (g_college.member ? 0.04f : 0.0f);
 			cs.tipSize *= 1.0f + 0.01f * g_collegeShows;  // word from the College goes before you
+			{
+				const int rank = RankNow().level;
+				cs.tipSize *= 1.0f + 0.05f * (std::max)(0, rank - 1);  // a ranked bard is paid like one
+				cs.maxPerListener = static_cast<int>(cs.maxPerListener * (1.0f + 0.15f * (std::max)(0, rank - 1)));
+			}
 			if (g_atCollege) {
 				cs.tipSize *= 0.6f;    // students have little to give
 				cs.patience *= 1.25f;  // and the hall knows good playing from bad
@@ -1422,6 +1463,20 @@ namespace Performance
 				Hud(fmt::format("{}: \"Practise more before you play in these halls again.\"", judge));
 			}
 			spdlog::info("College show: room {:.2f}, noted {}", avg, g_collegeShows);
+		}
+
+		// a letter from Viarmo when you rise
+		void CheckRank()
+		{
+			const Rank r = RankNow();
+			if (r.level > g_rankSeen) {
+				g_rankSeen = r.level;
+				if (r.level >= 2) {
+					Hud(fmt::format("A letter from Viarmo: \"The College names you {}. Play like it.\"", r.name));
+					Say(fmt::format("The Bards College names you {}.", r.name), kGoldCol);
+					spdlog::info("Rank: {} (score {})", r.name, r.score);
+				}
+			}
 		}
 
 		// what the town makes of this performance
@@ -1510,6 +1565,7 @@ namespace Performance
 			g_college = CollegeStanding();
 			g_atCollege = AtTheCollege();
 			g_recognised = false;
+			CheckRank();
 			ApplyCrowdSettings();
 			if (g_atCollege) {
 				Say("You play in the College's own hall. The students will listen; the teachers will judge.", kDim);
@@ -1542,6 +1598,7 @@ namespace Performance
 			g_midiLive = false;
 			EndCollegeShow();
 			EndFame();
+			CheckRank();
 			SendAllAway();
 			for (auto id : g_lookers) {
 				Call(ActorOf(id), "ClearLookAt");
@@ -2158,11 +2215,17 @@ namespace Performance
 				}
 				ImGui::SameLine(0.0f, 30.0f * s);
 				if (g_college.member) {
-					ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.45f, 1.0f), "Bard of the College");
+					const Rank r = RankNow();
+					ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.45f, 1.0f), "%s of the College", r.name);
 					if (ImGui::IsItemHovered()) {
+						const std::string next = r.next ? fmt::format("\n\nTowards the next rank: {} / {}{}", r.score, r.next,
+															  r.level == 3 && g_collegeShows < 5 ? " (and five College notices)" : "") :
+						                                  std::string("\n\nThe highest rank there is.");
 						ImGui::SetTooltip("A member of the Bards College: rooms take you more seriously (warmer welcome, better tips), innkeepers give you longer\n"
-										  "before they lose patience, and the College's luthier gives you the members' price.%s",
-							g_college.Returned() > 0 ? fmt::format("\nYou brought back {} of the College's lost instruments: word of it follows you.", g_college.Returned()).c_str() : "");
+										  "before they lose patience, and the College's luthier gives you the members' price. Each rank above Apprentice pays better.\n"
+										  "Ranks come from the College's notices, towns that admire you, songs that are yours somewhere, and nights played.%s%s",
+							g_college.Returned() > 0 ? fmt::format("\nYou brought back {} of the College's lost instruments: word of it follows you.", g_college.Returned()).c_str() : "",
+							next.c_str());
 					}
 				} else {
 					ImGui::TextDisabled("Not of the College");
@@ -2711,6 +2774,9 @@ namespace Performance
 		if (a_intfc->OpenRecord('COLL', kSaveVersion)) {
 			a_intfc->WriteRecordData(g_collegeShows);
 		}
+		if (a_intfc->OpenRecord('RANK', kSaveVersion)) {
+			a_intfc->WriteRecordData(g_rankSeen);
+		}
 	}
 
 	void Load(SKSE::SerializationInterface* a_intfc)
@@ -2724,6 +2790,7 @@ namespace Performance
 		g_favourites.clear();
 		g_signature.clear();
 		g_collegeShows = 0;
+		g_rankSeen = 0;
 		std::uint32_t type = 0, version = 0, length = 0;
 		while (a_intfc->GetNextRecordInfo(type, version, length)) {
 			if (version != kSaveVersion) {
@@ -2836,6 +2903,8 @@ namespace Performance
 						g_favourites.insert(title);
 					}
 				}
+			} else if (type == 'RANK') {
+				a_intfc->ReadRecordData(g_rankSeen);
 			} else if (type == 'COLL') {
 				a_intfc->ReadRecordData(g_collegeShows);
 				g_collegeShows = std::clamp(g_collegeShows, 0, 10);
@@ -2863,5 +2932,6 @@ namespace Performance
 		g_favourites.clear();
 		g_signature.clear();
 		g_collegeShows = 0;
+		g_rankSeen = 0;
 	}
 }
