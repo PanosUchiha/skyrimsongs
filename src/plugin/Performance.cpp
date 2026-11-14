@@ -1304,12 +1304,13 @@ namespace Performance
 					BackToFree();
 					SetInst(inst);
 					g_lastInst = inst;
-					// switch straight away: snap out of the old instrument's idle (no put-away animation to wait out,
-					// which swallowed the new idle while the songbook was open) and start the new one
-					if (auto* p = Player()) {
-						p->NotifyAnimationGraph("IdleForceDefaultState");
-					}
-					PlayIdleFor(inst, 0.25);
+					// put the old instrument away properly (the put-away animation is what takes it out of the hands;
+					// starting the new idle before it finished left both instruments held), then take out the new one
+					StopIdle();
+					PlayIdleFor(inst, 1.6);
+					Say(fmt::format("You put away the {} and take out the {}.", InstName(inst == Instrument::Lute ? Instrument::Flute : Instrument::Lute),
+							InstName(inst)),
+						kDim);
 				}
 				if (on) {
 					ImGui::PopStyleColor();
