@@ -3,6 +3,7 @@
 #include "Performance.h"
 
 #include "Audio.h"
+#include "InstrumentHud.h"
 #include "Config.h"
 #include "MidiIn.h"
 #include "Overlay.h"
@@ -12,7 +13,9 @@
 #include "../music/Keymap.h"
 #include "../music/Songs.h"
 
-#define IMGUI_DEFINE_MATH_OPERATORS
+#ifndef IMGUI_DEFINE_MATH_OPERATORS
+#	define IMGUI_DEFINE_MATH_OPERATORS
+#endif
 #include <imgui.h>
 
 #undef GetObject  // Windows.h renames it to GetObjectA, and BSScript::Variable has a GetObject
@@ -1335,7 +1338,7 @@ namespace Performance
 			const float W = (std::min)(980.0f * s, sw * 0.92f);
 			const bool  along = g_act == Act::Along;
 			const float headH = 34.0f * s, laneH = 30.0f * s, hwH = along ? laneH * 3.0f + 14.0f * s : 26.0f * s;
-			const float kbH = cfg.showKeyboard ? 150.0f * s : 0.0f;  // the piano
+			const float kbH = !cfg.showKeyboard ? 0.0f : (g_inst == music::Instrument::Flute ? 170.0f : 190.0f) * s;  // the instrument
 			const float hintH = 24.0f * s;
 			const float H = headH + hwH + kbH + hintH + 18.0f * s;
 			const ImVec2 p0((sw - W) * 0.5f, sh - H - 26.0f * s), p1(p0.x + W, p0.y + H);
@@ -1438,14 +1441,13 @@ namespace Performance
 				y += hwH;
 			}
 
-			// the keyboard, lit as its notes sound
+			// the instrument itself, lit as its notes sound: a lute's neck, or a flute's tone holes
 			if (cfg.showKeyboard) {
-				const int   base = Base();
-				// what's sounding now: your notes, and in "let it play" the song's
-				std::set<int> sounding;
+				// what's sounding now, and for how long: your notes, and in "let it play" the song's
+				std::vector<InstrumentHud::Sounding> sounding;
 				for (const auto& [pitch, t] : g_lit) {
-					if (now - t < 0.2) {
-						sounding.insert(pitch);
+					if (now - t < 0.6) {
+						sounding.push_back({ pitch, static_cast<float>(now - t) });
 					}
 				}
 				if (g_act == Act::Auto) {
@@ -1453,58 +1455,17 @@ namespace Performance
 						if (n.start > songT) {
 							break;
 						}
-						if (songT < n.start + (std::max)(0.12, n.dur)) {
-							sounding.insert(n.pitch);
+						if (songT - n.start < 0.6) {
+							sounding.push_back({ n.pitch, static_cast<float>(songT - n.start) });
 						}
 					}
 				}
-				// the next note to play (along)
-				int nextPitch = -1;
-				if (along) {
-					const auto& chart = g_chart.Chart();
-					for (std::size_t i = 0; i < chart.size(); ++i) {
-						if (g_chart.StateOf(i) == music::ChartJudge::State::Waiting && chart[i].start > songT - 0.16) {
-							nextPitch = chart[i].pitch;
-							break;
-						}
-					}
-				}
-				// a 37-key piano, C to C three octaves up: 22 white keys, 15 black. Each white key shows the letter that
-				// plays it; each black key shows Shift + the white key on its left.
-				const float  pw = (std::min)(W - 32.0f * s, 22.0f * 76.0f * s);
-				const float  ww = pw / 22.0f;
-				const float  px = p0.x + (W - pw) * 0.5f, py = y + 4.0f * s;
-				const float  wh = kbH - 10.0f * s, bh = wh * 0.6f, bw = ww * 0.62f;
-				const ImU32  litCol = IM_COL32(230, 190, 105, 240);
-				auto letterFor = [](int a_w) -> char { return a_w == 21 ? 'I' : music::keymap::kLetters[a_w / 7][a_w % 7]; };
-				// white keys
-				for (int w = 0; w < 22; ++w) {
-					const int    pitch = w == 21 ? base + 36 : base + (w / 7) * 12 + music::keymap::kWhite[w % 7];
-					const bool   lit = sounding.contains(pitch);
-					const bool   next = nextPitch == pitch;
-					const ImVec2 k0(px + w * ww, py), k1(k0.x + ww - 2.0f * s, py + wh);
-					dl->AddRectFilled(k0, k1, lit ? litCol : IM_COL32(222, 212, 190, 235), 4.0f * s, ImDrawFlags_RoundCornersBottom);
-					dl->AddRect(k0, k1, next ? kGoldCol : IM_COL32(60, 45, 30, 200), 4.0f * s, ImDrawFlags_RoundCornersBottom, next ? 3.0f * s : 1.0f * s);
-					const ImU32 ink = IM_COL32(40, 28, 16, 255);
-					Text(dl, F.key, { (k0.x + k1.x) * 0.5f, k1.y - 50.0f * s }, ink, std::string(1, letterFor(w)), 0.5f);
-					Text(dl, F.sm, { (k0.x + k1.x) * 0.5f, k1.y - 23.0f * s }, IM_COL32(90, 70, 50, 255), music::NoteName(pitch), 0.5f);
-				}
-				// black keys: after C D F G A of each octave (not after E, B or the top C)
-				for (int w = 0; w < 21; ++w) {
-					const int c = w % 7;
-					if (c == 2 || c == 6) {
-						continue;
-					}
-					const int    pitch = base + (w / 7) * 12 + music::keymap::kWhite[c] + 1;
-					const bool   lit = sounding.contains(pitch);
-					const bool   next = nextPitch == pitch;
-					const float  cx = px + (w + 1) * ww - 1.0f * s;
-					const ImVec2 k0(cx - bw * 0.5f, py), k1(cx + bw * 0.5f, py + bh);
-					dl->AddRectFilled(k0, k1, lit ? litCol : IM_COL32(28, 22, 18, 250), 3.0f * s, ImDrawFlags_RoundCornersBottom);
-					dl->AddRect(k0, k1, next ? kGoldCol : IM_COL32(200, 160, 90, 90), 3.0f * s, ImDrawFlags_RoundCornersBottom, next ? 3.0f * s : 1.0f * s);
-					const ImU32 ink = lit ? IM_COL32(40, 28, 16, 255) : kInk;
-					Text(dl, F.sm, { cx, k1.y - 42.0f * s }, ink, fmt::format("S+{}", letterFor(w)), 0.5f);
-					Text(dl, F.sm, { cx, k1.y - 22.0f * s }, lit ? ink : kDim, music::NoteName(pitch), 0.5f);
+				const InstrumentHud::Fonts fonts{ F.key, F.sm, F.bookIt };
+				const ImVec2               ip(p0.x + 16.0f * s, y), isz(W - 32.0f * s, kbH);
+				if (g_inst == music::Instrument::Flute) {
+					InstrumentHud::DrawFlute(dl, ip, isz, s, Base(), sounding, now, fonts);
+				} else {
+					InstrumentHud::DrawLute(dl, ip, isz, s, Base(), sounding, now, fonts);
 				}
 				y += kbH;
 			}
