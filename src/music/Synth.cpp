@@ -411,25 +411,23 @@ namespace music
 		for (int k = 0; k < 3; ++k) {
 			const float fk = (std::min)(f * (k + 1), 12000.0f);
 			const float c = 2.0f * static_cast<float>(std::sin(kPi * fk / m_rate));
-			const float q = 0.06f;  // narrow
+			const float q = 0.03f;  // narrow: a breath of pitch, not noise
 			auto&       st = v.rz[k];
 			const float hp = n - st[0] - q * st[1];
 			st[1] += c * hp;
 			st[0] += c * st[1];
 			air += st[1] * (k == 0 ? 1.0f : k == 1 ? 0.6f : 0.35f);
 		}
-		const float hiss = 0.86f * (v.hissY + n - v.hissX);  // high-passed (~1 kHz)
-		v.hissX = n;
-		v.hissY = hiss;
-		const float airLevel = (0.035f + 0.05f * lo + 0.06f * deep);
-		const float hissLevel = (0.012f + 0.02f * lo + 0.02f * deep);
+		// (no broadband hiss: it read as white noise behind every note)
+		const float airLevel = (0.008f + 0.012f * lo + 0.015f * deep);
 
 		// the chiff: a puff of air at the start of each note (and lighter on a slur)
 		v.chiff *= std::exp(static_cast<float>(-dt / 0.035));
 
 		const float level = v.env * (1.0f + 0.04f * v.jitA) * (1.0f - 0.3f * deep);
 		const float trem = 1.0f + 0.025f * bloom * static_cast<float>(std::sin(kTau * rate * v.age + 0.6));
-		const float out = tone * level * trem + air * airLevel * v.env + hiss * (hissLevel * v.env + v.chiff * 0.25f);
+		// the chiff: the same tuned air, briefly louder at the start of a note
+		const float out = tone * level * trem + air * (airLevel * v.env + v.chiff * 0.05f);
 		return out * 0.44f * v.norm;  // (0.44: level with the lute)
 	}
 

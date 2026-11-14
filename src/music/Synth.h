@@ -13,7 +13,7 @@
 //    string. Low notes are warm and ring long, high ones bright and short; plucked nearer the bridge as they go
 //    up, with the click of the finger, through a small wooden body and a little room.
 //  - Flute: a tone that brightens as the breath fills it (soft = nearly pure, loud = more harmonics), air
-//    resonating at the first harmonics and a high hiss around it, a player's slight unsteadiness in pitch and
+//    resonating faintly at the first harmonics (no broadband hiss), a player's slight unsteadiness in pitch and
 //    loudness, a chiff of air at the start, a scoop up into the note and a vibrato that blooms if you hold it.
 //    Low register breathy, top pure; below C4 a big soft low flute. Played live it's monophonic and slurs.
 //  Every key's loudness is evened out (measured, see kLuteNorm / kFluteNorm).
@@ -96,7 +96,6 @@ namespace music
 			float  bpLow = 0.0f, bpBand = 0.0f;  // the breath noise's band-pass
 			float  rz[3][2]{};                   // breath resonating at the first three harmonics (band-passes)
 			float  jitP = 0.0f, jitA = 0.0f;     // a player's unsteadiness: slow wander in pitch and loudness
-			float  hissX = 0.0f, hissY = 0.0f;   // the air's hiss (high-passed noise)
 			// coin
 			float  coinVol = 0.0f;
 			double phases[6]{};
