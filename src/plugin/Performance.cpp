@@ -168,7 +168,6 @@ namespace Performance
 		// the instrument comes out with the first note (or a song), and goes away again after a while of quiet
 		bool   g_animOn = false;
 		double g_lastNoteAt = 0.0;
-		double g_animOffAt = -10.0;
 		int                         g_totalEarned = 0;
 		int                         g_performances = 0;
 
@@ -388,11 +387,19 @@ namespace Performance
 			return fmt::format("{}{}", TierWord(a_t), InstName(a_i));
 		}
 
-		// The bard idle, played straight through the player's AI process (what Papyrus's PlayIdle does), a moment
-		// after you take the instrument out (the camera has to settle into third person first), retried a few times
-		// if the game refuses it, then through Papyrus as a last try.
-		double g_idleAt = -1.0;
-		int    g_idleTries = 0;
+		// The instrument in your hands. The bard idle is what puts it there, and IdleStop_Loose (the put-away) is the
+		// only thing that takes it out again; starting one before the other has finished leaves both instruments
+		// held. So: what should be held (g_want) and what is (g_held) are kept apart, and AnimTick moves one towards
+		// the other a step at a time: put away, wait for it to finish, then take out. Each step is checked a moment
+		// later (the game can accept an idle and still not play it) and tried again if it didn't take.
+		int    g_want = -1, g_held = -1;  // -1 nothing, 0 lute, 1 flute
+		double g_busyUntil = 0.0;         // a put-away is still playing until then
+		double g_nextTry = 0.0;
+		int    g_tries = 0;
+		double g_checkAt = -1.0;          // when to see whether the last idle took
+		int    g_checking = -1;           // what it should show then: 0/1 an instrument, 2 put away
+		int    g_checks = 0;
+		double g_firstPersonAt = -1.0;    // back to first person, once the put-away has played
 
 		bool NativeIdle(RE::TESIdleForm* a_idle)
 		{
@@ -404,60 +411,112 @@ namespace Performance
 			return proc && proc->PlayIdle(p, a_idle, nullptr);
 		}
 
-		void PlayIdleFor(Instrument a_i, double a_delay = 0.4)
+		RE::TESIdleForm* LastIdle()
 		{
-			(void)a_i;
-			g_idleAt = Now() + a_delay;
-			g_idleTries = 0;
+			auto* p = Player();
+			auto* proc = p ? p->GetActorRuntimeData().currentProcess : nullptr;
+			return proc && proc->middleHigh ? proc->middleHigh->lastIdlePlayed : nullptr;
 		}
 
-		void RunIdle()
+		const char* IdleName(RE::TESIdleForm* a_idle)
 		{
-			auto* idle = g_idles[g_inst == Instrument::Lute ? 0 : 1];
+			return !a_idle ? "none" : a_idle == g_idles[0] ? "lute" : a_idle == g_idles[1] ? "flute" : a_idle == g_stopIdle ? "put-away" : "other";
+		}
+
+		void IssueStop()
+		{
+			if (g_stopIdle && NativeIdle(g_stopIdle)) {
+				spdlog::info("Putting the instrument away");
+			} else if (g_stopIdle) {
+				spdlog::info("Putting the instrument away (through Papyrus)");
+				Call(Player(), "PlayIdle", g_stopIdle);
+			} else if (auto* p = Player()) {
+				p->NotifyAnimationGraph("IdleForceDefaultState");
+			}
+		}
+
+		void AnimTick(double a_now)
+		{
+			// did the last step take?
+			if (g_checkAt > 0.0 && a_now >= g_checkAt) {
+				g_checkAt = -1.0;
+				auto* last = LastIdle();
+				if (g_checking == 2) {
+					if (last == g_idles[0] || last == g_idles[1]) {
+						spdlog::info("The put-away didn't take (last idle: {}); again", IdleName(last));
+						if (++g_checks <= 3) {
+							IssueStop();
+							g_busyUntil = a_now + 1.6;
+							g_checking = 2;
+							g_checkAt = a_now + 0.6;
+						}
+					} else {
+						g_checks = 0;
+					}
+				} else if (g_checking >= 0 && g_held == g_checking) {
+					if (last == nullptr || last == g_stopIdle) {
+						spdlog::info("The {} idle didn't take (last idle: {}); again", g_checking == 0 ? "lute" : "flute", IdleName(last));
+						if (++g_checks <= 3) {
+							g_held = -1;  // not out after all: take it out again
+							g_nextTry = a_now;
+						}
+					} else {
+						g_checks = 0;
+					}
+				}
+			}
+			if (g_held == g_want) {
+				return;
+			}
+			if (g_held != -1) {
+				// the wrong instrument (or one that should be away) is out: put it away first
+				IssueStop();
+				g_held = -1;
+				g_busyUntil = a_now + 1.6;
+				g_checking = 2;
+				g_checkAt = a_now + 0.6;
+				g_checks = 0;
+				return;
+			}
+			if (g_want == -1 || a_now < g_busyUntil || a_now < g_nextTry) {
+				return;
+			}
+			auto* idle = g_idles[g_want];
 			if (!idle) {
-				spdlog::warn("No {} idle to play", InstName(g_inst));
-				g_idleAt = -1.0;
+				spdlog::warn("No {} idle to play", g_want == 0 ? "lute" : "flute");
+				g_want = -1;
 				return;
 			}
 			if (NativeIdle(idle)) {
-				spdlog::info("Playing the {} idle {:08X} (try {})", InstName(g_inst), idle->GetFormID(), g_idleTries + 1);
-				g_idleAt = -1.0;
+				spdlog::info("Taking out the {} (idle {:08X}, try {})", g_want == 0 ? "lute" : "flute", idle->GetFormID(), g_tries + 1);
+				g_held = g_want;
+				g_tries = 0;
+				g_checking = g_held;
+				g_checkAt = a_now + 0.8;
 				return;
 			}
-			if (++g_idleTries < 12) {
-				spdlog::info("The game isn't ready for the {} idle yet (try {})", InstName(g_inst), g_idleTries);
-				g_idleAt = Now() + 0.25;
+			if (++g_tries < 12) {
+				g_nextTry = a_now + 0.25;
 				return;
 			}
-			spdlog::warn("The game refused the {} idle {:08X} twelve times; asking through Papyrus", InstName(g_inst), idle->GetFormID());
+			spdlog::warn("The game refused the {} idle twelve times; asking through Papyrus", g_want == 0 ? "lute" : "flute");
 			Call(Player(), "PlayIdle", idle);
-			g_idleAt = -1.0;
+			g_held = g_want;
+			g_tries = 0;
 		}
 
 		// the first note (or a song) brings the instrument out; a while of quiet puts it away (see Tick)
 		void EnsureAnim()
 		{
 			g_lastNoteAt = Now();
-			if (g_animOn) {
-				return;
-			}
 			g_animOn = true;
-			// right after putting it away, let that finish first, or both end up in the hands
-			PlayIdleFor(g_inst, (std::max)(0.05, g_animOffAt + 1.6 - Now()));
+			g_want = g_inst == Instrument::Lute ? 0 : 1;
 		}
 
-		void StopIdle()
+		void PutAway()
 		{
-			g_idleAt = -1.0;
-			auto* p = Player();
-			if (g_stopIdle && NativeIdle(g_stopIdle)) {
-				return;
-			}
-			if (g_stopIdle) {
-				Call(p, "PlayIdle", g_stopIdle);
-			} else if (p) {
-				p->NotifyAnimationGraph("IdleForceDefaultState");
-			}
+			g_animOn = false;
+			g_want = -1;
 		}
 
 		// ------------------------------------------------------------------------------------------ gold
@@ -1570,6 +1629,11 @@ namespace Performance
 				}
 			}
 			g_animOn = false;  // the instrument comes out with the first note
+			g_want = -1;
+			if (g_firstPersonAt > 0.0) {
+				g_firstPersonAt = -1.0;  // starting again before the camera went back: it goes back after this time instead
+				g_forcedThird = true;
+			}
 			g_lastNoteAt = Now();
 			MuteMusic(true);
 			g_midiCount = MidiIn::Open(&OnMidi);
@@ -1641,14 +1705,13 @@ namespace Performance
 			Audio::StopSong();
 			MidiIn::Close();
 			g_act = Act::Free;
-			if (g_animOn) {
-				StopIdle();
-			}
-			g_animOn = false;
+			PutAway();
+			const bool wasOut = g_held != -1 || false;
+			AnimTick(Now());  // the put-away starts now
 			if (g_forcedThird) {
-				if (auto* cam = RE::PlayerCamera::GetSingleton()) {
-					cam->ForceFirstPerson();
-				}
+				// back to first person only once the put-away has played: switching at once cut it short and left
+				// the instrument in your hands
+				g_firstPersonAt = Now() + (wasOut ? 2.0 : 0.0);
 				g_forcedThird = false;
 			}
 			MuteMusic(false);
@@ -1725,6 +1788,14 @@ namespace Performance
 				return;
 			}
 			if (!g_playing) {
+				// after you stop: the put-away finishes (and is checked), then the camera goes back
+				AnimTick(now);
+				if (g_firstPersonAt > 0.0 && now >= g_firstPersonAt) {
+					g_firstPersonAt = -1.0;
+					if (auto* cam = RE::PlayerCamera::GetSingleton()) {
+						cam->ForceFirstPerson();
+					}
+				}
 				return;
 			}
 			auto* p = Player();
@@ -1750,17 +1821,12 @@ namespace Performance
 				Stop("a menu opened");
 				return;
 			}
-			if (g_idleAt > 0.0 && now >= g_idleAt) {
-				RunIdle();
-			}
 			if (g_act == Act::Auto && !Audio::SongPaused()) {
 				g_lastNoteAt = now;
 			} else if (g_animOn && now - g_lastNoteAt > 8.0) {
-				// a while of quiet: the instrument goes down (the next note brings it up again)
-				StopIdle();
-				g_animOn = false;
-				g_animOffAt = now;
+				PutAway();  // a while of quiet: the instrument goes down (the next note brings it up again)
 			}
+			AnimTick(now);
 			g_midiLive = Overlay::GetMode() == Overlay::Mode::Playing && g_act != Act::Auto;
 			{
 				std::vector<MidiHit> hits;
@@ -2210,9 +2276,7 @@ namespace Performance
 					// put the old instrument away properly (the put-away animation is what takes it out of the hands;
 					// starting the new idle before it finished left both instruments held), then take out the new one
 					if (g_animOn) {
-						StopIdle();
-						PlayIdleFor(inst, 1.6);
-						g_lastNoteAt = Now();
+						EnsureAnim();  // the old one goes away first, then the new one comes out (AnimTick)
 					}
 					ApplyCrowdSettings();
 					Say(fmt::format("You put away the {} and take out the {}.", InstName(inst == Instrument::Lute ? Instrument::Flute : Instrument::Lute),
