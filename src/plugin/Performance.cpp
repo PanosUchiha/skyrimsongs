@@ -62,6 +62,7 @@ namespace Performance
 		std::set<RE::FormID>           g_lookers;            // seated listeners turned to watch you (head and eyes; a chair won't let them turn)
 		double                         g_nextBardHush = 0.0;  // when to ask the inn's bard to stop again
 		RE::BGSMusicType*              g_silence = nullptr;  // a music type of nothing but silence, pushed while you play
+		RE::BGSMusicType*              g_tavernSilence = nullptr;  // Skyrim's own "hush the inn" (MUSTavernSILENCE, what the bards' script uses)
 		std::vector<RE::TESIdleForm*>  g_applaud, g_dance, g_enjoy;
 		RE::TESIdleForm*               g_give = nullptr;
 		bool                           g_silenced = false;
@@ -502,11 +503,13 @@ namespace Performance
 		void MuteMusic(bool a_mute)
 		{
 			// the music: a silent music type on top of the game's (the way Skyrim's Got Talent does it)
-			if (a_mute && Config::Get().muteMusic && g_silence && !g_silenced) {
+			if (a_mute && Config::Get().muteMusic && (g_silence || g_tavernSilence) && !g_silenced) {
 				Call(g_silence, "Add");
+				Call(g_tavernSilence, "Add");
 				g_silenced = true;
 			} else if (!a_mute && g_silenced) {
 				Call(g_silence, "Remove");
+				Call(g_tavernSilence, "Remove");
 				g_silenced = false;
 			}
 			if (a_mute) {
@@ -522,6 +525,35 @@ namespace Performance
 					c->SetCategoryVolume(v);
 				}
 				g_muted.clear();
+			}
+		}
+
+		// A bard's song goes on as music after their performance (the scene) is stopped: while you play, any bard
+		// music that's playing or queued is taken off. Whatever else plays is logged once, to know what to hush.
+		void HushMusic()
+		{
+			auto* mm = RE::BSMusicManager::GetSingleton();
+			if (!mm || !Config::Get().muteMusic) {
+				return;
+			}
+			static std::set<RE::FormID> s_logged;
+			auto check = [&](RE::BSIMusicType* a_t) {
+				auto* m = a_t ? skyrim_cast<RE::BGSMusicType*>(a_t) : nullptr;
+				if (!m || m == g_silence || m == g_tavernSilence) {
+					return;
+				}
+				const std::string id = Lower(m->GetFormEditorID());
+				const bool        bard = id.find("bard") != std::string::npos;
+				if (s_logged.insert(m->GetFormID()).second) {
+					spdlog::info("Music while you play: {} {:08X} (priority {}){}", m->GetFormEditorID(), m->GetFormID(), m->priority, bard ? ": a bard's, hushed" : "");
+				}
+				if (bard) {
+					Call(m, "Remove");
+				}
+			};
+			check(mm->current);
+			for (auto* t : mm->musicQueue) {
+				check(t);
 			}
 		}
 
@@ -1744,6 +1776,7 @@ namespace Performance
 			if (now - s_scan > 0.5) {
 				s_scan = now;
 				ScanListeners();
+				HushMusic();
 			}
 
 			const bool book = Overlay::GetMode() == Overlay::Mode::Book;
@@ -2472,6 +2505,9 @@ namespace Performance
 				g_musicCats.push_back(c);
 			}
 		}
+		g_tavernSilence = RE::TESForm::LookupByEditorID<RE::BGSMusicType>("MUSTavernSILENCE");
+		spdlog::info("Inn silence: {}", g_tavernSilence ? fmt::format("MUSTavernSILENCE {:08X} (priority {})", g_tavernSilence->GetFormID(), g_tavernSilence->priority) :
+		                                                  std::string("MUSTavernSILENCE not found"));
 		spdlog::info("Forms: gold {}, innkeepers {}, lute models {}, flute models {}, idles lute {} flute {} stop {}, music categories {}, silence {:08X}",
 			g_gold != nullptr, g_innkeepers != nullptr, g_instrumentModels[0].size(), g_instrumentModels[1].size(), g_idles[0] != nullptr,
 			g_idles[1] != nullptr, g_stopIdle != nullptr, g_musicCats.size(), g_silence ? g_silence->GetFormID() : 0u);
