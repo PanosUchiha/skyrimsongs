@@ -74,6 +74,18 @@ namespace InstrumentHud
 			dl->AddText(f, f->FontSize, p, col, s.c_str());
 		}
 
+		// a note's name on a small dark tag, readable over wood or the room behind
+		void Tag(ImDrawList* dl, ImFont* f, ImVec2 c, float s, float a, const std::string& t)
+		{
+			const ImVec2 sz = f->CalcTextSizeA(f->FontSize, FLT_MAX, 0.0f, t.c_str());
+			const ImVec2 pad(8.0f * s, 3.0f * s);
+			const ImVec2 a0 = c - sz * 0.5f - pad, a1 = c + sz * 0.5f + pad;
+			const int    al = static_cast<int>(255 * a);
+			dl->AddRectFilled(a0, a1, IM_COL32(18, 12, 7, al * 215 / 255), 6.0f * s);
+			dl->AddRect(a0, a1, IM_COL32(230, 190, 105, al * 170 / 255), 6.0f * s, 0, 1.2f * s);
+			dl->AddText(f, f->FontSize, c - sz * 0.5f, IM_COL32(255, 226, 150, al), t.c_str());
+		}
+
 		// where a pitch is on the instrument: its row (0 low .. 2 high), column (0..6, 7 = the top C) and sharp;
 		// notes outside the 37 are folded in by octaves
 		struct Cell
@@ -198,7 +210,7 @@ namespace InstrumentHud
 		// the note names, engraved above
 		static constexpr const char* kNames[8] = { "C", "D", "E", "F", "G", "A", "B", "C" };
 		for (int c = 0; c < 8; ++c) {
-			Label(dl, f.label, { slotX(c), topY(slotX(c)) - 11.0f * s }, Rgb(226, 206, 160, 170), kNames[c]);
+			Label(dl, f.sm, { slotX(c), topY(slotX(c)) - 12.0f * s }, Rgb(226, 206, 160, 190), kNames[c]);
 		}
 
 		// ---- the strings: three courses, bass (Z) lowest on screen, treble (Q) on top
@@ -291,7 +303,7 @@ namespace InstrumentHud
 		const float W = size.x, H = size.y;
 		dl->PushClipRect(pos, pos + size, true);
 		const float r = H * 0.13f;  // the tube's radius
-		const float yc = pos.y + r + 16.0f * s;
+		const float yc = pos.y + r + 30.0f * s;  // (room above for the note tag)
 		const float xL = pos.x + 70.0f * s, xR = pos.x + W - 18.0f * s;
 
 		// the latest note, and how much breath is in it
@@ -389,8 +401,10 @@ namespace InstrumentHud
 			dl->AddCircle(hc, holeR, Rgb(40, 22, 8, 220), 32, 1.2f * s);
 			// the note's name, over the hole while it sounds
 			if (last && (std::max)(lit, sharpLit) > 0.0f && (trill ? lastCell.col == 7 : lastCell.col == c)) {
-				Label(dl, f.label, { x, yc - r - 14.0f * s }, Rgb(255, 226, 150, static_cast<int>(255 * (std::max)(lit, sharpLit))),
-					music::NoteName(last->pitch));
+				// the note, and the key that plays it
+				const char  letter = lastCell.col == 7 ? 'I' : music::keymap::kLetters[lastCell.row][lastCell.col];
+				std::string key = lastCell.sharp ? std::string("Shift+") + letter : std::string(1, letter);
+				Tag(dl, f.sm, { x, yc - r - 16.0f * s }, s, (std::max)(lit, sharpLit), music::NoteName(last->pitch) + "  " + key);
 			}
 			if (!trill && c != 2 && c != 6) {
 				// the small hole that gives the sharp

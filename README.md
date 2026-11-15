@@ -1,11 +1,11 @@
 # Skyrim Songs
 
-Play the lute and flute for real in Skyrim SE, AE and GOG: take out your instrument anywhere, play it with the
+Play the lute and flute for real in Skyrim SE 1.5.97, AE 1.6.x, 1.7.104 and GOG (not VR or LE): take out your instrument anywhere, play it with the
 computer keyboard or a USB MIDI keyboard, and whoever's in earshot listens. Play well and they toss you coins;
 play badly and they heckle. In an inn, a bad enough set gets you thrown out (and you're not welcome back that day).
 Put your own MIDI files in a folder and let them play themselves (the cheat).
 
-Status: **first version, not yet tried in game.**
+Status: in play since 0.1 on SE 1.5.97.
 
 ## Playing
 
@@ -72,7 +72,7 @@ please) and a purse.
   - `Midi`: standard MIDI files, format 0 and 1, tempo maps, SMPTE time, running status, RIFF `.rmi`; and the
     melody finder for play-along (the highest, busiest single-line part, reduced to one note at a time).
   - `Judge`, `Crowd`, `Songs`, `Keymap`.
-- `src/plugin`: the SKSE plugin (CommonLibSSE-NG, one DLL for 1.5.97, 1.6 and later via Address Library).
+- `src/plugin`: the SKSE plugin (CommonLibSSE-NG, one DLL for 1.5.97, 1.6.x, 1.7.99/1.7.104 and GOG via Address Library; VR is switched off).
   The synth streams through its own XAudio2 voice (8 ms blocks, four queued); songs are scheduled on the audio
   thread, and the play-along clock is the voice's played-sample count, so the sheet music, the judging and what
   you hear agree. Input comes from the same hook on the game's input dispatch as SkyrimYacht's; ImGui draws over

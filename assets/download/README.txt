@@ -5,8 +5,12 @@ Play the lute and flute for real, anywhere in Skyrim, with your keyboard or a US
 earshot listens: play well and they toss you coins, play badly and they heckle - and in an inn, a bad enough set
 gets you thrown out.
 
-Requirements: SKSE64 and Address Library for SKSE Plugins, for your game version. One DLL works on 1.5.97 and
-every 1.6 release (Steam and GOG). No plugin (.esp) needed.
+Requirements: SKSE64 and Address Library for SKSE Plugins, both for your game version. One DLL works on:
+  - Skyrim SE 1.5.97
+  - Skyrim AE 1.6.x (Steam), up to 1.6.1170
+  - Skyrim 1.7.99 and 1.7.104 (Steam, 2026): SKSE64 2.3.x and Address Library "All in One" v13 or newer
+  - GOG 1.6.1179: the GOG builds of SKSE64 and Address Library
+Not Skyrim VR, and not Legendary Edition (Oldrim). No plugin (.esp) needed.
 
 How to play
   - Carry a lute or a flute (the game's own, the Bards College quest ones too; RequireInstrument = 0 in the INI

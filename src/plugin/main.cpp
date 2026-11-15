@@ -41,7 +41,7 @@ namespace
 	void LogEnvironment()
 	{
 		const auto ver = REL::Module::get().version();
-		spdlog::info("Game version {} ({})", ver.string("."sv), REL::Module::IsAE() ? "AE" : (REL::Module::IsSE() ? "SE" : "other"));
+		spdlog::info("Game version {} ({})", ver.string("."sv), REL::Module::IsAE() ? (ver[1] >= 7 ? "AE 1.7" : "AE") : (REL::Module::IsSE() ? "SE" : "other"));
 		const auto lib = REL::Module::IsAE() ? fmt::format("Data\\SKSE\\Plugins\\versionlib-{}.bin", ver.string()) :
 		                                       fmt::format("Data\\SKSE\\Plugins\\version-{}.bin", ver.string());
 		std::error_code ec;
