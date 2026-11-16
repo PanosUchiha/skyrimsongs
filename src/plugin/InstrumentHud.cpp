@@ -444,4 +444,88 @@ namespace InstrumentHud
 		dl->AddRect(g0, g1, Rgb(200, 160, 100, 160), 3 * s, 0, 1.0f * s);
 		dl->PopClipRect();
 	}
+
+	// ================================================================================================== the piano
+	void DrawPiano(ImDrawList* dl, ImVec2 pos, ImVec2 size, float s, const std::vector<Sounding>& notes, const Fonts& f)
+	{
+		if (!dl || size.x <= 0.0f || size.y <= 0.0f) {
+			return;
+		}
+		using namespace music::keymap;
+		const float W = size.x, H = size.y;
+		const float x0 = pos.x + 2.0f * s, y0 = pos.y + 2.0f * s;
+		const float innerW = W - 4.0f * s;
+		const float whiteW = innerW / static_cast<float>(kPianoWhiteCount);
+		const float whiteH = H - 5.0f * s;
+		const float blackW = whiteW * 0.60f;
+		const float blackH = whiteH * 0.58f;
+
+		auto litFor = [&](int pitch) {
+			float lit = 0.0f;
+			for (const auto& n : notes) {
+				if (n.pitch == pitch) {
+					lit = (std::max)(lit, LitOf(n.age));
+				}
+			}
+			return lit;
+		};
+		auto correctFor = [&](int pitch) {
+			for (const auto& n : notes) {
+				if (n.pitch == pitch && n.correct) return true;
+			}
+			return false;
+		};
+		auto keyLabel = [&](int i) { return std::string(1, kPianoLabels[i]); };
+		auto noteIsC = [](int pitch) { return pitch % 12 == 0; };
+
+		dl->PushClipRect(pos, pos + size, true);
+		dl->AddRectFilled(pos, pos + size, Rgb(29, 20, 13, 230), 7.0f * s);
+		dl->AddRect(pos, pos + size, Rgb(185, 140, 78, 150), 7.0f * s, 0, 1.2f * s);
+
+		// White keys first, so the black keys can sit above their upper edges.
+		for (int i = 0; i < kPianoWhiteCount; ++i) {
+			const int pitch = PianoWhitePitch(i);
+			const float x = x0 + i * whiteW;
+			const float lit = litFor(pitch);
+			const bool correct = correctFor(pitch);
+			ImU32 top = correct ? Mix(Rgb(250, 245, 230), Rgb(165, 255, 175), lit * 0.92f) : Mix(Rgb(250, 245, 230), Rgb(255, 218, 145), lit * 0.80f);
+			ImU32 bot = correct ? Mix(Rgb(198, 187, 165), Rgb(75, 190, 100), lit * 0.90f) : Mix(Rgb(198, 187, 165), Rgb(224, 166, 78), lit * 0.72f);
+			GradQuad(dl, { x, y0 }, { x + whiteW, y0 }, { x + whiteW, y0 + whiteH }, { x, y0 + whiteH }, top, top, bot, bot);
+			dl->AddRect({ x, y0 }, { x + whiteW, y0 + whiteH }, Rgb(66, 48, 31, 230), 1.0f * s, 0, 1.0f * s);
+			if (lit > 0.03f) {
+				Glow(dl, { x + whiteW * 0.5f, y0 + whiteH * 0.72f }, whiteW * 0.40f, correct ? Rgb(115, 255, 140) : Rgb(255, 205, 100), lit * (correct ? 0.65f : 0.45f));
+			}
+			if (noteIsC(pitch)) {
+				const std::string note = music::NoteName(pitch);
+				Label(dl, f.sm, { x + whiteW * 0.5f, y0 + 12.0f * s }, correct ? Rgb(25, 90, 38) : lit > 0.1f ? Rgb(112, 66, 20) : Rgb(105, 89, 66), note, 0.5f, 0.5f, false);
+			}
+			Label(dl, f.key, { x + whiteW * 0.5f, y0 + whiteH - 15.0f * s }, lit > 0.1f ? Rgb(92, 48, 10) : Rgb(62, 52, 40), keyLabel(i), 0.5f, 0.5f, false);
+		}
+
+		// Black keys are the sharp above C, D, F, G or A. E and B are intentionally skipped.
+		for (int i = 0; i < kPianoWhiteCount; ++i) {
+			if (!PianoHasBlackAfter(i)) {
+				continue;
+			}
+			const int pitch = PianoWhitePitch(i) + 1;
+			const float x = x0 + (i + 1) * whiteW - blackW * 0.5f;
+			const float lit = litFor(pitch);
+			const bool correct = correctFor(pitch);
+			const ImVec2 a(x + 2.0f * s, y0 + 3.0f * s);
+			const ImVec2 b(x + blackW + 2.0f * s, y0 + blackH + 3.0f * s);
+			dl->AddRectFilled(a, b, Rgb(0, 0, 0, 95), 2.0f * s);
+			ImU32 top = correct ? Mix(Rgb(42, 37, 32), Rgb(90, 190, 105), lit * 0.95f) : Mix(Rgb(42, 37, 32), Rgb(150, 91, 30), lit * 0.9f);
+			ImU32 bot = correct ? Mix(Rgb(8, 8, 8), Rgb(35, 105, 50), lit * 0.9f) : Mix(Rgb(8, 8, 8), Rgb(85, 48, 17), lit * 0.8f);
+			GradQuad(dl, { x, y0 }, { x + blackW, y0 }, { x + blackW, y0 + blackH }, { x, y0 + blackH }, top, top, bot, bot);
+			dl->AddRect({ x, y0 }, { x + blackW, y0 + blackH }, Rgb(4, 4, 4, 245), 2.0f * s, 0, 1.0f * s);
+			const char label = PianoBlackLabel(i);
+			Label(dl, f.sm, { x + blackW * 0.5f, y0 + blackH - 13.0f * s }, lit > 0.1f ? (correct ? Rgb(205, 255, 210) : Rgb(255, 225, 155)) : Rgb(225, 215, 195),
+				std::string(1, label), 0.5f, 0.5f, false);
+			if (lit > 0.03f) {
+				Glow(dl, { x + blackW * 0.5f, y0 + blackH * 0.5f }, blackW * 0.55f, correct ? Rgb(105, 255, 135) : Rgb(255, 190, 85), lit * (correct ? 0.68f : 0.5f));
+			}
+		}
+		dl->PopClipRect();
+	}
+
 }

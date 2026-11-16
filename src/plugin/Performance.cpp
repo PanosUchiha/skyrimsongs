@@ -8,6 +8,8 @@
 #include "MidiIn.h"
 #include "Overlay.h"
 
+#include "SKSE/API.h"
+
 #include "../music/Crowd.h"
 #include "../music/Judge.h"
 #include "../music/Keymap.h"
@@ -84,6 +86,37 @@ namespace Performance
 
 		std::recursive_mutex g_mtx;
 		bool                 g_playing = false;
+		bool                 g_pianoMode = false;
+		std::string          g_pianoSheetText;
+		std::string          g_pianoSheetError;			// parser, load/save and editor feedback
+		std::string          g_pianoSheetName = "Untitled Sheet";
+		bool                 g_pianoSheetNameEditing = false;
+		bool                 g_pianoSheetChanged = false;
+		struct SavedPianoSheet
+		{
+			std::string title;
+			std::filesystem::path path;
+			int bpm = 120;
+		};
+		std::vector<SavedPianoSheet> g_pianoSavedSheets;
+		int                  g_pianoSavedSelection = -1;
+		bool                 g_pianoSavedSheetsScanned = false;
+		bool                 g_pianoDeleteConfirm = false;
+		int                  g_pianoSheetBpm = 120;
+		bool                 g_pianoSheetValid = false;
+		music::Song          g_pianoSheetSong;
+		bool                 g_pianoSheetPractice = false;
+		struct PianoPracticeGroup
+		{
+			std::vector<std::size_t> notes;  // indices into the sorted piano sheet
+			std::vector<bool> played;        // each note in a chord turns green independently
+		};
+		constexpr std::size_t kPianoPracticeGroupsPerPage = 36;  // 12 columns x 3 rows
+		std::vector<PianoPracticeGroup> g_pianoPracticeGroups;
+		std::size_t          g_pianoPracticeCurrent = 0;
+		std::size_t          g_pianoPracticePage = 0;  // follows the current target; PageUp/PageDown remain available
+		bool                 g_pianoPracticeAnnounced = false;
+		std::unordered_map<int, double> g_pianoCorrectLit;  // correctly played piano keys briefly glow green
 		std::atomic<bool>    g_wantStart{ false };
 		Act                  g_act = Act::Free;
 		Instrument           g_inst = Instrument::Lute;
@@ -181,6 +214,23 @@ namespace Performance
 
 		RE::PlayerCharacter* Player() { return RE::PlayerCharacter::GetSingleton(); }
 
+		// Ask the activator's Papyrus script to end the piano pose and restore player controls.
+		void SendPianoExitEvent()
+		{
+			auto* source = SKSE::GetModCallbackEventSource();
+			if (!source) {
+				spdlog::error("Could not send SkyrimSongs_PianoExit: ModCallbackEvent source unavailable");
+				return;
+			}
+			SKSE::ModCallbackEvent event{
+				RE::BSFixedString("SkyrimSongs_PianoExit"),
+				RE::BSFixedString(""),
+				0.0f,
+				Player()
+			};
+			source->SendEvent(&event);
+		}
+
 		void Hud(const std::string& a_text) { RE::SendHUDMessage::ShowHUDMessage(a_text.c_str()); }
 
 		void Say(std::string a_text, ImU32 a_color)
@@ -219,8 +269,17 @@ namespace Performance
 			vm->DispatchMethodCall1(obj, a_fn, args, cb);
 		}
 
-		const char* InstName(Instrument a_i) { return a_i == Instrument::Lute ? "lute" : "flute"; }
-		int         Base() { return (g_inst == Instrument::Lute ? 36 : 60) + g_octave * 12; }  // the bottom row's C: lute C2-C5, flute C4-C7
+		const char* InstName(Instrument a_i)
+		{
+			switch (a_i) {
+			case Instrument::Lute: return "lute";
+			case Instrument::Flute: return "flute";
+			case Instrument::Piano: return "piano";
+			default: return "instrument";
+			}
+		}
+		int Base() { return (g_inst == Instrument::Flute ? 60 : 36) + g_octave * 12; }  // lute/piano C2-C5 or C2-C7, flute C4-C7
+		int CurrentTier() { return g_inst == Instrument::Lute ? g_tierNow[0] : g_inst == Instrument::Flute ? g_tierNow[1] : 0; }
 
 		// ------------------------------------------------------------------------------------------ instruments
 		std::string Lower(const char* a_s)
@@ -365,6 +424,9 @@ namespace Performance
 		// how fine an instrument is: the College's refit, or a master's own instrument from the College's quests
 		int Tier(Instrument a_i)
 		{
+			if (a_i == Instrument::Piano) {
+				return 0;
+			}
 			const int k = a_i == Instrument::Lute ? 0 : 1;
 			int       t = g_refit[k];
 			if (auto* p = Player()) {
@@ -381,6 +443,9 @@ namespace Performance
 		// "fine lute", "Finn's lute"
 		std::string InstLabel(Instrument a_i, int a_t)
 		{
+			if (a_i == Instrument::Piano) {
+				return "Piano";
+			}
 			if (a_t >= 3) {
 				return a_i == Instrument::Lute ? "Finn's lute" : "Pantea's flute";
 			}
@@ -509,6 +574,9 @@ namespace Performance
 		void EnsureAnim()
 		{
 			g_lastNoteAt = Now();
+			if (g_inst == Instrument::Piano) {
+				return;  // The piano's FNIS/Nemesis animation is driven by the activator.
+			}
 			g_animOn = true;
 			g_want = g_inst == Instrument::Lute ? 0 : 1;
 		}
@@ -627,7 +695,47 @@ namespace Performance
 		void Register(int a_pitch, double a_now, double a_songT)
 		{
 			g_lit[a_pitch] = a_now;
-			EnsureAnim();
+			g_pianoCorrectLit.erase(a_pitch);
+
+			// Piano sheets are untimed: the current note/chord remains on screen until the player
+			// supplies every pitch in it. Correct notes are remembered; wrong notes simply sound.
+			if (g_pianoMode && g_pianoSheetPractice && g_act == Act::Along) {
+				g_lastNoteAt = a_now;
+				if (g_pianoPracticeCurrent < g_pianoPracticeGroups.size()) {
+					auto& group = g_pianoPracticeGroups[g_pianoPracticeCurrent];
+					for (std::size_t i = 0; i < group.notes.size(); ++i) {
+						if (!group.played[i] && group.notes[i] < g_song.all.size() && g_song.all[group.notes[i]].pitch == a_pitch) {
+							group.played[i] = true;
+							g_pianoCorrectLit[a_pitch] = a_now;
+							break;
+						}
+					}
+					if (!group.played.empty() && std::all_of(group.played.begin(), group.played.end(), [](bool v) { return v; })) {
+						++g_pianoPracticeCurrent;
+						// Turn to the next sheet page automatically when the completed group advances
+						// the target beyond the current page. Never force the player backwards if they
+						// manually browsed ahead.
+						if (g_pianoPracticeCurrent < g_pianoPracticeGroups.size()) {
+							const std::size_t targetPage = g_pianoPracticeCurrent / kPianoPracticeGroupsPerPage;
+							if (targetPage > g_pianoPracticePage) {
+								g_pianoPracticePage = targetPage;
+							}
+						}
+						if (g_pianoPracticeCurrent >= g_pianoPracticeGroups.size() && !g_pianoPracticeAnnounced) {
+							g_pianoPracticeAnnounced = true;
+							Say(fmt::format("You finished \"{}\"!", g_song.title), kGreen);
+							Hud(fmt::format("Sheet completed: {}", g_song.title));
+							spdlog::info("Virtual Piano sheet completed manually: {}", g_song.title);
+						}
+					}
+				}
+				g_free.Note(a_now, a_pitch);
+				return;
+			}
+
+			if (!g_pianoMode) {
+				EnsureAnim();
+			}
 			switch (g_act) {
 			case Act::Free:
 				g_free.Note(a_now, a_pitch);
@@ -773,6 +881,12 @@ namespace Performance
 			g_act = Act::Free;
 			g_song = {};
 			g_free.Reset();
+			g_pianoSheetPractice = false;
+			g_pianoPracticeGroups.clear();
+			g_pianoPracticeCurrent = 0;
+			g_pianoPracticePage = 0;
+			g_pianoPracticeAnnounced = false;
+			g_pianoCorrectLit.clear();
 		}
 
 		void StartAlong(const music::Song& a_song)
@@ -808,7 +922,7 @@ namespace Performance
 			if (simple) {
 				spdlog::info("  simplified: {} of {} notes (the melody and a bass)", source.size(), g_song.all.size());
 			}
-			auto notes = music::FoldIntoRange(source);
+			auto notes = g_pianoMode ? music::FoldIntoRange(source, music::keymap::kPianoLow, music::keymap::kPianoHigh) : music::FoldIntoRange(source);
 			spdlog::info("  {} notes, {} doubled ones dropped after folding into the {}'s range", before, before - notes.size(), InstName(g_inst));
 			g_song.all = notes;
 			g_act = Act::Auto;
@@ -818,6 +932,39 @@ namespace Performance
 			Audio::PlaySong(notes, g_inst, Config::Get().speed, 1.0, true);
 			Say(simple ? fmt::format("You play {}, simply.", g_song.title) : fmt::format("You play {}.", g_song.title), kDim);
 			spdlog::info("Let it play: {} ({} notes)", g_song.title, notes.size());
+		}
+
+		// A player-led Virtual Piano sheet. There is no song clock: each note/chord stays highlighted
+		// until the player plays it, and long sheets are turned manually with PageUp/PageDown.
+		void StartPianoSheetPractice(const music::Song& a_song)
+		{
+			BackToFree();
+			g_song = a_song;
+			g_songShift = 0;
+			g_song.all = music::FoldIntoRange(g_song.all, music::keymap::kPianoLow, music::keymap::kPianoHigh);
+			std::stable_sort(g_song.all.begin(), g_song.all.end(), [](const music::Note& a, const music::Note& b) { return a.start < b.start; });
+			g_song.melody = g_song.all;
+			g_pianoPracticeGroups.clear();
+			for (std::size_t i = 0; i < g_song.all.size();) {
+				PianoPracticeGroup group;
+				const double onset = g_song.all[i].start;
+				while (i < g_song.all.size() && std::abs(g_song.all[i].start - onset) < 0.001) {
+					group.notes.push_back(i++);
+				}
+				group.played.assign(group.notes.size(), false);
+				g_pianoPracticeGroups.push_back(std::move(group));
+			}
+			g_pianoPracticeCurrent = 0;
+			g_pianoPracticePage = 0;
+			g_pianoPracticeAnnounced = false;
+			g_pianoSheetPractice = true;
+			g_act = Act::Along;
+			g_lastNoteAt = Now();
+			g_pianoCorrectLit.clear();
+			g_free.Reset();
+			Say(fmt::format("Real Play: {}. Follow the sheet at your own pace.", g_song.title), kGoldCol);
+			spdlog::info("Untimed Virtual Piano sheet: {} ({} notes, {} note groups)", g_song.title, g_song.all.size(), g_pianoPracticeGroups.size());
+			Overlay::SetMode(Overlay::Mode::Playing);
 		}
 
 		// ------------------------------------------------------------------------------------------ the audience moves
@@ -1384,6 +1531,9 @@ namespace Performance
 		// playing a lost instrument: someone notices, and its owner certainly does
 		void RemarkOnInstrument(const std::vector<std::uint32_t>& a_present)
 		{
+			if (g_inst == Instrument::Piano) {
+				return;
+			}
 			const int k = g_inst == Instrument::Lute ? 0 : 1;
 			if (g_recognised || g_tierNow[k] < 3 || a_present.empty() || !g_animOn) {
 				return;
@@ -1526,6 +1676,7 @@ namespace Performance
 			if (auto* syn = Audio::Synth()) {
 				syn->SetQuality(Instrument::Lute, g_tierNow[0]);
 				syn->SetQuality(Instrument::Flute, g_tierNow[1]);
+				syn->SetQuality(Instrument::Piano, 0);
 			}
 		}
 
@@ -1690,6 +1841,7 @@ namespace Performance
 			if (!g_playing) {
 				return;
 			}
+			const bool wasPiano = g_pianoMode;
 			g_playing = false;
 			g_midiLive = false;
 			EndCollegeShow();
@@ -1715,12 +1867,27 @@ namespace Performance
 				g_forcedThird = false;
 			}
 			MuteMusic(false);
-			g_lastInst = g_inst;
+			if (!g_pianoMode) {
+				g_lastInst = g_inst;
+			}
+			g_pianoMode = false;
+			g_pianoSheetNameEditing = false;
+			g_pianoSheetPractice = false;
+			g_pianoPracticeGroups.clear();
+			g_pianoPracticeCurrent = 0;
+			g_pianoPracticePage = 0;
+			g_pianoPracticeAnnounced = false;
+			g_pianoCorrectLit.clear();
 			Overlay::SetMode(Overlay::Mode::Closed);
 			if (g_earned > 0) {
 				Hud(fmt::format("You earned {} septims playing the {}.", g_earned, InstName(g_inst)));
 			}
 			spdlog::info("Stopped playing ({}), earned {}", a_why, g_earned);
+			// A normal piano stop comes from the Papyrus script, which already restored controls.
+			// Other stops (combat, death, cell change, load, etc.) must ask Papyrus to clean up.
+			if (wasPiano && std::string_view(a_why ? a_why : "") != "piano") {
+				SendPianoExitEvent();
+			}
 		}
 
 		// The innkeeper has had enough: out the nearest door that leads outside, and not back today.
@@ -1821,12 +1988,14 @@ namespace Performance
 				Stop("a menu opened");
 				return;
 			}
-			if (g_act == Act::Auto && !Audio::SongPaused()) {
-				g_lastNoteAt = now;
-			} else if (g_animOn && now - g_lastNoteAt > 8.0) {
-				PutAway();  // a while of quiet: the instrument goes down (the next note brings it up again)
+			if (!g_pianoMode) {
+				if (g_act == Act::Auto && !Audio::SongPaused()) {
+					g_lastNoteAt = now;
+				} else if (g_animOn && now - g_lastNoteAt > 8.0) {
+					PutAway();  // a while of quiet: the instrument goes down (the next note brings it up again)
+				}
+				AnimTick(now);
 			}
-			AnimTick(now);
 			g_midiLive = Overlay::GetMode() == Overlay::Mode::Playing && g_act != Act::Auto;
 			{
 				std::vector<MidiHit> hits;
@@ -1856,33 +2025,46 @@ namespace Performance
 				break;
 			case Act::Along:
 				{
-					const double t = Audio::SongTime();
-					// the count-in: three soft ticks
-					for (double beat = -3.0; beat < 0.0; beat += 1.0) {
-						if (g_lastClick < beat && t >= beat) {
-							g_lastClick = beat;
-							Audio::Click();
+					if (g_pianoSheetPractice) {
+						// Untimed practice: no count-in, no moving notes, no misses. The current group advances
+						// only after every note in it has been played correctly.
+						std::size_t hit = 0, total = 0;
+						for (const auto& group : g_pianoPracticeGroups) {
+							total += group.played.size();
+							hit += static_cast<std::size_t>(std::count(group.played.begin(), group.played.end(), true));
 						}
-					}
-					performing = performing && t >= 0.0;
-					g_chart.Advance(t - Config::Get().latencyMs / 1000.0);
-					g_quality = g_chart.Quality();
-					if (g_chart.Done(t)) {
-						const double score = g_chart.Score();
-						Say(fmt::format("{}: {:.0f}%  ({} perfect, {} good, {} missed)", g_song.title, score * 100.0, g_chart.Perfects(), g_chart.Goods(),
-								g_chart.Misses()),
-							score >= 0.6 ? kGreen : kRed);
-						std::vector<music::CrowdEvent> ev;
-						g_crowd.SongEnded(score, Speech01(), ev);
-						HandleCrowd(ev);
-						if (Config::Get().speechXp > 0.0f) {
-							p->AddSkillExperience(RE::ActorValue::kSpeech, static_cast<float>(score * 20.0 * Config::Get().speechXp));
+						g_quality = total ? 0.55 + 0.45 * static_cast<double>(hit) / static_cast<double>(total) : 0.55;
+						performing = performing && hit > 0;
+					} else {
+						const double t = Audio::SongTime();
+						// the count-in: three soft ticks
+						for (double beat = -3.0; beat < 0.0; beat += 1.0) {
+							if (g_lastClick < beat && t >= beat) {
+								g_lastClick = beat;
+								Audio::Click();
+							}
 						}
-						spdlog::info("Song over: {} {:.2f}", g_song.title, score);
-						BackToFree();
+						performing = performing && t >= 0.0;
+						g_chart.Advance(t - Config::Get().latencyMs / 1000.0);
+						g_quality = g_chart.Quality();
+						if (g_chart.Done(t)) {
+							const double score = g_chart.Score();
+							Say(fmt::format("{}: {:.0f}%  ({} perfect, {} good, {} missed)", g_song.title, score * 100.0, g_chart.Perfects(), g_chart.Goods(),
+									g_chart.Misses()),
+								score >= 0.6 ? kGreen : kRed);
+							std::vector<music::CrowdEvent> ev;
+							g_crowd.SongEnded(score, Speech01(), ev);
+							HandleCrowd(ev);
+							if (Config::Get().speechXp > 0.0f) {
+								p->AddSkillExperience(RE::ActorValue::kSpeech, static_cast<float>(score * 20.0 * Config::Get().speechXp));
+							}
+							spdlog::info("Song over: {} {:.2f}", g_song.title, score);
+							BackToFree();
+						}
 					}
 				}
 				break;
+
 			case Act::Auto:
 				{
 					g_quality = 0.92;
@@ -1970,6 +2152,87 @@ namespace Performance
 			return (a_col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
 		}
 
+		void DrawPianoPracticeStrip(ImDrawList* dl, ImVec2 pos, float width, float height, float s)
+		{
+			constexpr std::size_t kColumns = 12;
+			constexpr std::size_t kRows = 3;
+			static_assert(kColumns * kRows == kPianoPracticeGroupsPerPage);
+			const float x0 = pos.x, x1 = pos.x + width;
+			dl->AddRectFilled({ x0, pos.y }, { x1, pos.y + height }, IM_COL32(0, 0, 0, 115), 5.0f * s);
+			dl->AddRect({ x0, pos.y }, { x1, pos.y + height }, IM_COL32(200, 160, 90, 145), 5.0f * s, 0, 1.0f * s);
+
+			std::size_t totalNotes = 0, playedNotes = 0;
+			for (const auto& group : g_pianoPracticeGroups) {
+				totalNotes += group.played.size();
+				playedNotes += static_cast<std::size_t>(std::count(group.played.begin(), group.played.end(), true));
+			}
+			const std::size_t pageCount = (std::max)(std::size_t{1}, (g_pianoPracticeGroups.size() + kPianoPracticeGroupsPerPage - 1) / kPianoPracticeGroupsPerPage);
+			if (g_pianoPracticePage >= pageCount) g_pianoPracticePage = pageCount - 1;
+			const std::size_t first = g_pianoPracticePage * kPianoPracticeGroupsPerPage;
+			const std::size_t last = (std::min)(g_pianoPracticeGroups.size(), first + kPianoPracticeGroupsPerPage);
+			const bool currentVisible = g_pianoPracticeCurrent >= first && g_pianoPracticeCurrent < last;
+
+			Text(dl, F.sm, { x0 + 9.0f * s, pos.y + 2.0f * s }, kGoldCol,
+				"REAL PLAY  ·  no timer  ·  play at your own pace");
+			const std::string status = g_pianoPracticeCurrent >= g_pianoPracticeGroups.size() ? "Sheet complete!" :
+				(currentVisible ? fmt::format("Page {}/{}  ·  {}/{} notes", g_pianoPracticePage + 1, pageCount, playedNotes, totalNotes) :
+				 fmt::format("Current notes on page {}  ·  {}/{} notes", g_pianoPracticeCurrent / kPianoPracticeGroupsPerPage + 1, playedNotes, totalNotes));
+			Text(dl, F.sm, { x1 - 9.0f * s, pos.y + 2.0f * s }, kInk, status, 1.0f);
+
+			const float gridTop = pos.y + 19.0f * s;
+			const float gridBottom = pos.y + height - 17.0f * s;
+			const float rowH = (gridBottom - gridTop) / static_cast<float>(kRows);
+			const float slotW = (x1 - x0 - 16.0f * s) / static_cast<float>(kColumns);
+			const float rowX = x0 + 8.0f * s;
+
+			for (std::size_t g = first; g < last; ++g) {
+				const auto& group = g_pianoPracticeGroups[g];
+				const std::size_t local = g - first;
+				const std::size_t row = local / kColumns;
+				const std::size_t col = local % kColumns;
+				const float gx = rowX + static_cast<float>(col) * slotW;
+				const float gy = gridTop + static_cast<float>(row) * rowH;
+				const float gw = slotW - 3.0f * s;
+				const float gh = rowH - 3.0f * s;
+				const bool complete = !group.played.empty() && std::all_of(group.played.begin(), group.played.end(), [](bool v) { return v; });
+				const bool current = g == g_pianoPracticeCurrent;
+				const ImU32 outline = complete ? IM_COL32(105, 220, 130, 230) : current ? IM_COL32(235, 190, 100, 245) : IM_COL32(120, 105, 85, 115);
+				const ImU32 fill = complete ? IM_COL32(23, 54, 31, 220) : current ? IM_COL32(68, 49, 24, 235) : IM_COL32(28, 24, 19, 200);
+				dl->AddRectFilled({ gx, gy }, { gx + gw, gy + gh }, fill, 3.5f * s);
+				dl->AddRect({ gx, gy }, { gx + gw, gy + gh }, outline, 3.5f * s, 0, current ? 1.8f * s : 1.0f * s);
+
+				// Each pitch in a chord is drawn separately, so it turns green as soon as that note is hit.
+				const std::size_t shown = (std::min)(group.notes.size(), std::size_t{6});
+				const float fontSize = F.sm->FontSize * 0.88f;
+				float totalW = 0.0f;
+				std::vector<std::string> labels;
+				labels.reserve(shown + (group.notes.size() > shown ? 1 : 0));
+				for (std::size_t n = 0; n < shown; ++n) {
+					const auto index = group.notes[n];
+					const char ch = index < g_song.all.size() ? music::keymap::PianoSheetLabelForPitch(g_song.all[index].pitch) : '?';
+					labels.emplace_back(1, ch);
+					totalW += F.sm->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, labels.back().c_str()).x;
+				}
+				if (group.notes.size() > shown) {
+					labels.emplace_back(fmt::format("+{}", group.notes.size() - shown));
+					totalW += F.sm->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, labels.back().c_str()).x;
+				}
+				const float gap = 1.0f * s;
+				totalW += gap * static_cast<float>(labels.size() > 0 ? labels.size() - 1 : 0);
+				float tx = gx + (gw - totalW) * 0.5f;
+				for (std::size_t n = 0; n < labels.size(); ++n) {
+					const bool hit = n < shown && group.played[n];
+					const ImU32 ink = hit ? IM_COL32(115, 245, 145, 255) : current ? IM_COL32(255, 218, 145, 255) : kDim;
+					const auto textSize = F.sm->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, labels[n].c_str());
+					dl->AddText(F.sm, fontSize, { tx, gy + (gh - textSize.y) * 0.5f }, ink, labels[n].c_str());
+					tx += textSize.x + gap;
+				}
+			}
+
+			Text(dl, F.sm, { x0 + 8.0f * s, pos.y + height - 15.0f * s }, kDim,
+				"Green = played  ·  Gold = next note/chord  ·  PgUp/PgDn = turn sheet page");
+		}
+
 		void DrawHud()
 		{
 			float sw = 0.0f, sh = 0.0f;
@@ -1982,8 +2245,9 @@ namespace Performance
 
 			const float W = (std::min)(980.0f * s, sw * 0.92f);
 			const bool  along = g_act == Act::Along;
-			const float headH = 34.0f * s, laneH = 30.0f * s, hwH = along ? laneH * 3.0f + 14.0f * s : 26.0f * s;
-			const float kbH = !cfg.showKeyboard ? 0.0f : (g_inst == music::Instrument::Flute ? 170.0f : 190.0f) * s;  // the instrument
+			const bool  pianoPractice = g_pianoMode && g_pianoSheetPractice && along;
+			const float headH = 34.0f * s, laneH = 30.0f * s, hwH = along ? (pianoPractice ? 122.0f * s : laneH * 3.0f + 14.0f * s) : 26.0f * s;
+			const float kbH = !cfg.showKeyboard ? 0.0f : (g_inst == music::Instrument::Piano ? 148.0f : g_inst == music::Instrument::Flute ? 170.0f : 190.0f) * s;  // the instrument
 			const float hintH = 24.0f * s;
 			const float H = headH + hwH + kbH + hintH + 18.0f * s;
 			const ImVec2 p0((sw - W) * 0.5f, sh - H - 26.0f * s), p1(p0.x + W, p0.y + H);
@@ -1992,10 +2256,11 @@ namespace Performance
 
 			// the header: instrument and what you're doing, the room, your earnings
 			float y = p0.y + 8.0f * s;
-			std::string what = g_act == Act::Free ? "Free play" : g_act == Act::Along ? "Playing along: " + g_song.title :
+			std::string what = g_act == Act::Free ? "Free play" : g_act == Act::Along ?
+			                   fmt::format("{}: {}", g_pianoSheetPractice ? "Real Play" : "Playing along", g_song.title) :
 			                   (Audio::SongPaused() ? "Paused: " : "Playing: ") + g_song.title;
 			{
-				std::string inst = InstLabel(g_inst, g_tierNow[g_inst == Instrument::Lute ? 0 : 1]);
+				std::string inst = InstLabel(g_inst, CurrentTier());
 				inst[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(inst[0])));
 				const std::string head = fmt::format("{}  ·  {}", inst, what);
 				Text(dl, F.book, { p0.x + 16.0f * s, y }, kGoldCol, head);
@@ -2025,6 +2290,9 @@ namespace Performance
 
 			// the sheet music: the notes slide to the line; the lanes are the keyboard's rows (top row highest)
 			if (along) {
+				if (pianoPractice) {
+					DrawPianoPracticeStrip(dl, { p0.x + 16.0f * s, y }, W - 32.0f * s, hwH - 2.0f * s, s);
+				} else {
 				const float  x0 = p0.x + 16.0f * s, x1 = p1.x - 16.0f * s, hitX = x0 + 90.0f * s;
 				const double ahead = 3.2 / (std::max)(0.5f, cfg.speed);
 				const float  pps = static_cast<float>((x1 - hitX) / ahead);
@@ -2070,6 +2338,7 @@ namespace Performance
 				}
 				Text(dl, F.sm, { x1 - 6.0f * s, y + 2.0f * s }, kDim,
 					fmt::format("{:.0f}%   streak {}", g_chart.Score() * 100.0, g_chart.Streak()), 1.0f);
+				}
 				y += hwH;
 			} else if (g_act == Act::Free) {
 				// what the room hears in your playing
@@ -2105,7 +2374,9 @@ namespace Performance
 				std::vector<InstrumentHud::Sounding> sounding;
 				for (const auto& [pitch, t] : g_lit) {
 					if (now - t < 0.6) {
-						sounding.push_back({ pitch, static_cast<float>(now - t) });
+						const auto correct = g_pianoCorrectLit.find(pitch);
+						const bool green = g_pianoSheetPractice && correct != g_pianoCorrectLit.end() && now - correct->second < 0.55;
+						sounding.push_back({ pitch, static_cast<float>(now - t), green });
 					}
 				}
 				if (g_act == Act::Auto) {
@@ -2120,7 +2391,9 @@ namespace Performance
 				}
 				const InstrumentHud::Fonts fonts{ F.key, F.sm, F.bookIt };
 				const ImVec2               ip(p0.x + 16.0f * s, y), isz(W - 32.0f * s, kbH);
-				if (g_inst == music::Instrument::Flute) {
+				if (g_inst == music::Instrument::Piano) {
+					InstrumentHud::DrawPiano(dl, ip, isz, s, sounding, fonts);
+				} else if (g_inst == music::Instrument::Flute) {
 					InstrumentHud::DrawFlute(dl, ip, isz, s, Base(), sounding, now, fonts);
 				} else {
 					InstrumentHud::DrawLute(dl, ip, isz, s, Base(), sounding, now, fonts);
@@ -2131,10 +2404,13 @@ namespace Performance
 			// the keys' help
 			const std::string octave = g_octave == 0 ? "" : fmt::format("   (octave {:+d})", g_octave);
 			Text(dl, F.sm, { p0.x + W * 0.5f, y + 2.0f * s }, kDim,
-				g_act == Act::Auto ?
-					fmt::format("P {}  ·  Tab songbook  ·  Backspace hide  ·  Esc stop the song", Audio::SongPaused() ? "carry on" : "pause") :
-					fmt::format("Z-M  A-J  Q-I play  ·  Shift = black keys (S+Z = C#)  ·  Up/Down octave  ·  Tab songbook  ·  Backspace hide  ·  Esc {}{}",
-						g_act == Act::Free ? "put away" : "stop the song", octave),
+				g_pianoMode ?
+					(g_pianoSheetPractice ? std::string("1-M play  ·  Shift = black keys  ·  Space sustain  ·  PgUp/PgDn sheet pages  ·  Tab editor  ·  Esc exit") :
+					 std::string("1-M play (C2-C7)  ·  Shift = black keys  ·  Space sustain  ·  Tab sheets  ·  Esc exit  ·  Backspace hide")) :
+					(g_act == Act::Auto ?
+						fmt::format("P {}  ·  Tab songbook  ·  Backspace hide  ·  Esc stop the song", Audio::SongPaused() ? "carry on" : "pause") :
+						fmt::format("Z-M  A-J  Q-I play  ·  Shift = black keys (S+Z = C#)  ·  Up/Down octave  ·  Tab songbook  ·  Backspace hide  ·  Esc {}{}",
+							g_act == Act::Free ? "put away" : "stop the song", octave)),
 				0.5f);
 
 			// what the room says
@@ -2246,8 +2522,436 @@ namespace Performance
 			ImGui::PopID();
 		}
 
+		std::string ReadClipboardText()
+		{
+			if (!::OpenClipboard(nullptr)) {
+				return {};
+			}
+			std::string result;
+			if (HANDLE data = ::GetClipboardData(CF_UNICODETEXT)) {
+				if (const wchar_t* wide = static_cast<const wchar_t*>(::GlobalLock(data))) {
+					const int bytes = ::WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+					if (bytes > 1 && bytes <= 65536) {
+						result.resize(static_cast<std::size_t>(bytes));
+						::WideCharToMultiByte(CP_UTF8, 0, wide, -1, result.data(), bytes, nullptr, nullptr);
+						if (!result.empty() && result.back() == '\0') result.pop_back();
+					}
+					::GlobalUnlock(data);
+				}
+			}
+			::CloseClipboard();
+			if (result.size() >= 3 && static_cast<unsigned char>(result[0]) == 0xEF && static_cast<unsigned char>(result[1]) == 0xBB && static_cast<unsigned char>(result[2]) == 0xBF) {
+				result.erase(0, 3);  // UTF-8 BOM from copied text
+			}
+			return result;
+		}
+
+		constexpr const char* kPianoSheetDir = "Data\\SKSE\\Plugins\\SkyrimSongs\\Sheets";
+		constexpr std::size_t kMaxSavedPianoSheetBytes = 16 * 1024;
+
+		std::string TrimSheetName(std::string a_name)
+		{
+			auto ws = [](unsigned char c) { return std::isspace(c) != 0; };
+			while (!a_name.empty() && ws(static_cast<unsigned char>(a_name.front()))) a_name.erase(a_name.begin());
+			while (!a_name.empty() && ws(static_cast<unsigned char>(a_name.back()))) a_name.pop_back();
+			if (a_name.empty()) a_name = "Untitled Sheet";
+			if (a_name.size() > 64) a_name.resize(64);
+			return a_name;
+		}
+
+		std::string PianoSheetFileStem(const std::string& a_title)
+		{
+			std::string stem;
+			stem.reserve((std::min)(a_title.size(), std::size_t{48}));
+			bool previousSeparator = false;
+			for (unsigned char c : a_title) {
+				char out = 0;
+				if (std::isalnum(c)) {
+					out = static_cast<char>(c);
+				} else if (c == ' ' || c == '_' || c == '-') {
+					out = c == '-' ? '-' : '_';
+				} else if (c == '(' || c == ')') {
+					out = static_cast<char>(c);
+				} else {
+					continue;
+				}
+				const bool separator = out == '_' || out == '-';
+				if (separator && previousSeparator) continue;
+				stem.push_back(out);
+				previousSeparator = separator;
+				if (stem.size() >= 48) break;
+			}
+			while (!stem.empty() && (stem.back() == '_' || stem.back() == '-' || stem.back() == '.')) stem.pop_back();
+			if (stem.empty()) stem = "Untitled_Sheet";
+			std::string upper = Lower(stem.c_str());
+			if (upper == "con" || upper == "prn" || upper == "aux" || upper == "nul" ||
+				upper == "com1" || upper == "com2" || upper == "com3" || upper == "com4" || upper == "com5" || upper == "com6" || upper == "com7" || upper == "com8" || upper == "com9" ||
+				upper == "lpt1" || upper == "lpt2" || upper == "lpt3" || upper == "lpt4" || upper == "lpt5" || upper == "lpt6" || upper == "lpt7" || upper == "lpt8" || upper == "lpt9") {
+				stem.insert(stem.begin(), '_');
+			}
+			return stem;
+		}
+
+		bool ReadPianoSheetHeader(const std::filesystem::path& a_path, SavedPianoSheet& a_out)
+		{
+			std::ifstream file(a_path, std::ios::binary);
+			if (!file) return false;
+			std::string magic, titleLine, bpmLine, separator;
+			if (!std::getline(file, magic) || magic != "SKYRIMSONGS_VPS 1" ||
+				!std::getline(file, titleLine) || !std::getline(file, bpmLine) || !std::getline(file, separator) || !separator.empty()) {
+				return false;
+			}
+			if (!titleLine.starts_with("TITLE=") || !bpmLine.starts_with("BPM=")) return false;
+			a_out.title = titleLine.substr(6);
+			if (a_out.title.empty()) a_out.title = a_path.stem().string();
+			try {
+				a_out.bpm = std::clamp(std::stoi(bpmLine.substr(4)), 60, 240);
+			} catch (...) {
+				return false;
+			}
+			a_out.path = a_path;
+			return true;
+		}
+
+		void RefreshSavedPianoSheets(const std::string& a_selectStem = {})
+		{
+			g_pianoSavedSheets.clear();
+			g_pianoSavedSelection = -1;
+			std::error_code ec;
+			const std::filesystem::path dir(kPianoSheetDir);
+			std::filesystem::create_directories(dir, ec);
+			if (ec) {
+				spdlog::warn("Could not create piano sheet folder '{}': {}", dir.string(), ec.message());
+				g_pianoSavedSheetsScanned = true;
+				return;
+			}
+			for (std::filesystem::directory_iterator it(dir, ec), last; !ec && it != last; it.increment(ec)) {
+				if (!it->is_regular_file(ec) || ec) { ec.clear(); continue; }
+				if (Lower(it->path().extension().string().c_str()) != ".vps") continue;
+				SavedPianoSheet sheet;
+				if (ReadPianoSheetHeader(it->path(), sheet)) {
+					g_pianoSavedSheets.push_back(std::move(sheet));
+				} else {
+					spdlog::warn("Ignoring invalid Virtual Piano sheet file: {}", it->path().string());
+				}
+			}
+			std::sort(g_pianoSavedSheets.begin(), g_pianoSavedSheets.end(), [](const SavedPianoSheet& a, const SavedPianoSheet& b) {
+				return _stricmp(a.title.c_str(), b.title.c_str()) < 0;
+			});
+			if (!a_selectStem.empty()) {
+				for (std::size_t i = 0; i < g_pianoSavedSheets.size(); ++i) {
+					if (_stricmp(g_pianoSavedSheets[i].path.stem().string().c_str(), a_selectStem.c_str()) == 0) {
+						g_pianoSavedSelection = static_cast<int>(i);
+						break;
+					}
+				}
+			}
+			if (g_pianoSavedSelection < 0 && !g_pianoSavedSheets.empty()) g_pianoSavedSelection = 0;
+			g_pianoSavedSheetsScanned = true;
+		}
+
+		bool ReadPianoSheetFile(const std::filesystem::path& a_path, std::string& a_text, SavedPianoSheet& a_meta, std::string& a_error)
+		{
+			std::error_code ec;
+			const auto size = std::filesystem::file_size(a_path, ec);
+			if (ec || size > kMaxSavedPianoSheetBytes) {
+				a_error = ec ? fmt::format("Could not read sheet file: {}", ec.message()) : "Saved sheet is too large.";
+				return false;
+			}
+			std::ifstream file(a_path, std::ios::binary);
+			if (!file || !ReadPianoSheetHeader(a_path, a_meta)) {
+				a_error = "This saved sheet has an invalid header.";
+				return false;
+			}
+			std::string magic, titleLine, bpmLine, separator;
+			std::getline(file, magic);
+			std::getline(file, titleLine);
+			std::getline(file, bpmLine);
+			std::getline(file, separator);
+			a_text.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+			if (a_text.size() > 8192) {
+				a_error = "Saved sheet notation exceeds the 8,192 character limit.";
+				return false;
+			}
+			return true;
+		}
+
+		void ParsePianoSheet()
+		{
+			g_pianoSheetName = TrimSheetName(g_pianoSheetName);
+			g_pianoSheetValid = music::ParseVirtualPianoSheet(g_pianoSheetText, g_pianoSheetName, g_pianoSheetBpm, g_pianoSheetSong, &g_pianoSheetError);
+			if (g_pianoSheetValid) {
+				const int seconds = static_cast<int>(g_pianoSheetSong.length + 0.5);
+				g_pianoSheetError = fmt::format("Ready: {} notes · {}:{:02d}", g_pianoSheetSong.all.size(), seconds / 60, seconds % 60);
+			} else if (g_pianoSheetError.empty()) {
+				g_pianoSheetError = "The sheet could not be parsed.";
+			}
+		}
+
+		bool SavePianoSheet()
+		{
+			if (g_pianoSheetText.empty()) {
+				g_pianoSheetError = "Nothing to save yet. Paste or enter a sheet first.";
+				return false;
+			}
+			if (!g_pianoSheetValid) ParsePianoSheet();
+			if (!g_pianoSheetValid) return false;
+			const std::string title = TrimSheetName(g_pianoSheetName);
+			g_pianoSheetName = title;
+			g_pianoSheetSong.title = title;
+			const std::string stem = PianoSheetFileStem(title);
+			std::error_code ec;
+			const std::filesystem::path dir(kPianoSheetDir);
+			std::filesystem::create_directories(dir, ec);
+			if (ec) {
+				g_pianoSheetError = fmt::format("Could not create Sheets folder: {}", ec.message());
+				return false;
+			}
+			const auto path = dir / (stem + ".vps");
+			std::ofstream file(path, std::ios::binary | std::ios::trunc);
+			if (!file) {
+				g_pianoSheetError = "Could not open the sheet file for writing.";
+				return false;
+			}
+			file << "SKYRIMSONGS_VPS 1\n" << "TITLE=" << title << "\n" << "BPM=" << std::clamp(g_pianoSheetBpm, 60, 240) << "\n\n";
+			file.write(g_pianoSheetText.data(), static_cast<std::streamsize>(g_pianoSheetText.size()));
+			file.flush();
+			if (!file) {
+				g_pianoSheetError = "A write error occurred while saving the sheet.";
+				return false;
+			}
+			RefreshSavedPianoSheets(stem);
+			g_pianoSheetError = fmt::format("Saved '{}' to SkyrimSongs\\Sheets\\{}.vps", title, stem);
+			spdlog::info("Saved Virtual Piano sheet '{}' ({} characters, {} BPM) to {}", title, g_pianoSheetText.size(), g_pianoSheetBpm, path.string());
+			return true;
+		}
+
+		bool LoadSavedPianoSheet(int a_index)
+		{
+			if (a_index < 0 || static_cast<std::size_t>(a_index) >= g_pianoSavedSheets.size()) return false;
+			const auto selected = g_pianoSavedSheets[static_cast<std::size_t>(a_index)];
+			std::string text, error;
+			SavedPianoSheet metadata;
+			if (!ReadPianoSheetFile(selected.path, text, metadata, error)) {
+				g_pianoSheetError = std::move(error);
+				g_pianoSheetValid = false;
+				return false;
+			}
+			g_pianoSheetName = metadata.title;
+			g_pianoSheetText = std::move(text);
+			g_pianoSheetBpm = metadata.bpm;
+			g_pianoSheetChanged = true;
+			g_pianoSheetNameEditing = false;
+			g_pianoDeleteConfirm = false;
+			g_pianoSheetValid = false;
+			ParsePianoSheet();
+			if (g_pianoSheetValid) {
+				g_pianoSheetError = fmt::format("Loaded '{}' · {} BPM", g_pianoSheetName, g_pianoSheetBpm);
+			}
+			spdlog::info("Loaded Virtual Piano sheet '{}' from {}", g_pianoSheetName, selected.path.string());
+			return g_pianoSheetValid;
+		}
+
+		bool DeleteSavedPianoSheet(int a_index)
+		{
+			if (a_index < 0 || static_cast<std::size_t>(a_index) >= g_pianoSavedSheets.size()) return false;
+			const auto selected = g_pianoSavedSheets[static_cast<std::size_t>(a_index)];
+			std::error_code ec;
+			const bool removed = std::filesystem::remove(selected.path, ec);
+			if (ec || !removed) {
+				g_pianoSheetError = ec ? fmt::format("Could not delete sheet: {}", ec.message()) : "The saved sheet file was not found.";
+				return false;
+			}
+			RefreshSavedPianoSheets();
+			g_pianoDeleteConfirm = false;
+			g_pianoSheetError = fmt::format("Deleted '{}'", selected.title);
+			spdlog::info("Deleted Virtual Piano sheet '{}'", selected.path.string());
+			return true;
+		}
+
+		void DrawPianoSheetBook()
+		{
+			if (!g_pianoSavedSheetsScanned) RefreshSavedPianoSheets();
+			float sw = 0.0f, sh = 0.0f;
+			Overlay::ScreenSize(sw, sh);
+			const float s = g_ui;
+			ImGui::SetNextWindowSize(ImVec2((std::min)(900.0f * s, sw * 0.92f), (std::min)(700.0f * s, sh * 0.9f)), ImGuiCond_Always);
+			ImGui::SetNextWindowPos(ImVec2(sw * 0.5f, sh * 0.46f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+			ImGui::Begin("##pianosheets", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+
+			ImGui::PushFont(F.title);
+			ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.45f, 1.0f), "Piano Song Sheets");
+			ImGui::PopFont();
+			ImGui::TextDisabled("Paste a Virtual Piano music sheet or type its notation below.");
+			ImGui::Separator();
+
+			ImGui::TextWrapped("[asdf] = chord   ·   asdf = quick notes   ·   a s d f = spaced notes   ·   | = pause   ·   blank line = phrase break");
+			ImGui::TextWrapped("Lowercase letters and digits are white keys; capitals and symbols are black keys. Tempo affects Auto Play only; Real Play ignores note spacing and is completely self-paced.");
+			ImGui::TextWrapped("Auto Play performs the piece for you. Real Play is untimed: the sheet stays still above the piano, each note or chord remains highlighted until you play it, and correct notes turn green. Use PageUp/PageDown to turn long sheets manually.");
+			ImGui::Spacing();
+
+			if (ImGui::Button("Paste from clipboard", ImVec2(190.0f * s, 0))) {
+				auto pasted = ReadClipboardText();
+				if (pasted.empty()) {
+					g_pianoSheetError = "Clipboard is empty or doesn't contain text.";
+					g_pianoSheetValid = false;
+				} else if (pasted.size() > 8192) {
+					g_pianoSheetError = "Sheet is too large (maximum 8,192 characters).";
+					g_pianoSheetValid = false;
+				} else {
+					g_pianoSheetText = std::move(pasted);
+					g_pianoSheetError = "Pasted from clipboard. Press Parse sheet to check it.";
+					g_pianoSheetValid = false;
+					g_pianoSheetChanged = true;
+				}
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Example", ImVec2(90.0f * s, 0))) {
+				g_pianoSheetText = "[tuo] t u o | [yip] y i p | [tuo]";
+				g_pianoSheetError = "Example loaded. Press Parse sheet to check it.";
+				g_pianoSheetValid = false;
+				g_pianoSheetChanged = true;
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Clear", ImVec2(90.0f * s, 0))) {
+				g_pianoSheetText.clear();
+				g_pianoSheetError.clear();
+				g_pianoSheetValid = false;
+				g_pianoSheetChanged = true;
+			}
+			ImGui::SameLine(0.0f, 28.0f * s);
+			ImGui::SetNextItemWidth(230.0f * s);
+			ImGui::SliderInt("Tempo", &g_pianoSheetBpm, 60, 240, "%d BPM");
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				g_pianoSheetValid = false;
+				g_pianoSheetError = "Tempo changed. Parse the sheet again.";
+			}
+
+			ImGui::Separator();
+			ImGui::TextDisabled("Sheet name:");
+			ImGui::SameLine();
+			if (g_pianoSheetNameEditing) {
+				ImGui::TextColored(ImVec4(0.95f, 0.82f, 0.55f, 1.0f), "%s  [typing...]", g_pianoSheetName.c_str());
+				ImGui::SameLine();
+				if (ImGui::Button("Finish name")) {
+					g_pianoSheetNameEditing = false;
+					if (g_pianoSheetValid) g_pianoSheetSong.title = TrimSheetName(g_pianoSheetName);
+				}
+			} else {
+				ImGui::Text("%s", g_pianoSheetName.c_str());
+				ImGui::SameLine();
+				if (ImGui::Button("Rename")) g_pianoSheetNameEditing = true;
+			}
+			ImGui::SameLine(0.0f, 18.0f * s);
+			if (ImGui::Button("Save sheet", ImVec2(125.0f * s, 0))) {
+				g_pianoSheetNameEditing = false;
+				SavePianoSheet();
+			}
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save this sheet and its tempo. Saving another sheet with the same name overwrites it.");
+			if (g_pianoSheetNameEditing) {
+				ImGui::TextDisabled("Type a name with your keyboard. Enter or Esc finishes editing the name.");
+			}
+
+			ImGui::TextDisabled("Saved sheets:");
+			if (g_pianoSavedSheets.empty()) {
+				ImGui::SameLine();
+				ImGui::TextDisabled("No saved sheets yet.");
+			} else {
+				const char* preview = (g_pianoSavedSelection >= 0 && static_cast<std::size_t>(g_pianoSavedSelection) < g_pianoSavedSheets.size())
+					? g_pianoSavedSheets[static_cast<std::size_t>(g_pianoSavedSelection)].title.c_str() : "Select a sheet...";
+				ImGui::SetNextItemWidth(360.0f * s);
+				if (ImGui::BeginCombo("##savedpianosheets", preview)) {
+					for (std::size_t i = 0; i < g_pianoSavedSheets.size(); ++i) {
+						const auto& item = g_pianoSavedSheets[i];
+						const bool selected = g_pianoSavedSelection == static_cast<int>(i);
+						const std::string label = fmt::format("{}  ·  {} BPM", item.title, item.bpm);
+						if (ImGui::Selectable(label.c_str(), selected)) {
+							g_pianoSavedSelection = static_cast<int>(i);
+							g_pianoDeleteConfirm = false;
+						}
+						if (selected) ImGui::SetItemDefaultFocus();
+					}
+					ImGui::EndCombo();
+				}
+				ImGui::SameLine();
+				ImGui::BeginDisabled(g_pianoSavedSelection < 0 || static_cast<std::size_t>(g_pianoSavedSelection) >= g_pianoSavedSheets.size());
+				if (ImGui::Button("Load", ImVec2(75.0f * s, 0))) LoadSavedPianoSheet(g_pianoSavedSelection);
+				ImGui::SameLine();
+				if (ImGui::Button(g_pianoDeleteConfirm ? "Cancel delete" : "Delete", ImVec2(85.0f * s, 0))) {
+					g_pianoDeleteConfirm = !g_pianoDeleteConfirm;
+				}
+				ImGui::EndDisabled();
+				if (g_pianoDeleteConfirm && g_pianoSavedSelection >= 0 && static_cast<std::size_t>(g_pianoSavedSelection) < g_pianoSavedSheets.size()) {
+					ImGui::SameLine();
+					ImGui::TextColored(ImVec4(0.95f, 0.60f, 0.48f, 1.0f), "Delete '%s'?", g_pianoSavedSheets[static_cast<std::size_t>(g_pianoSavedSelection)].title.c_str());
+					if (ImGui::Button("Confirm delete")) DeleteSavedPianoSheet(g_pianoSavedSelection);
+					ImGui::SameLine();
+					if (ImGui::Button("Keep it")) g_pianoDeleteConfirm = false;
+				}
+			}
+
+			ImGui::Spacing();
+			const ImVec2 box = ImGui::GetCursorScreenPos();
+			const ImVec2 size = ImVec2(ImGui::GetContentRegionAvail().x, 250.0f * s);
+			auto* dl = ImGui::GetWindowDrawList();
+			dl->AddRectFilled(box, box + size, IM_COL32(0, 0, 0, 100), 5.0f * s);
+			dl->AddRect(box, box + size, IM_COL32(200, 160, 90, 100), 5.0f * s, 0, 1.2f * s);
+			ImGui::BeginChild("##pianosheettext", size, false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+			ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
+			if (g_pianoSheetText.empty()) {
+				ImGui::TextDisabled("Type sheet notation here...\n\nExample:\n[tyo] a s d f | [qet] [wer]\n\nYou can also paste an entire sheet using the button above.");
+			} else {
+				ImGui::TextUnformatted(g_pianoSheetText.c_str());
+			}
+			if (g_pianoSheetChanged) {
+				ImGui::SetScrollHereY(1.0f);
+				g_pianoSheetChanged = false;
+			}
+			ImGui::PopTextWrapPos();
+			ImGui::EndChild();
+			ImGui::TextDisabled("Keyboard input is captured here while this editor is open. Backspace deletes; Enter starts a new line. Tempo affects Auto Play only; Real Play has no timer.");
+
+			ImGui::Spacing();
+			if (ImGui::Button("Parse sheet", ImVec2(140.0f * s, 0))) {
+				ParsePianoSheet();
+			}
+			ImGui::SameLine();
+			ImGui::BeginDisabled(!g_pianoSheetValid);
+			if (ImGui::Button("Auto Play", ImVec2(130.0f * s, 0))) {
+				StartAuto(g_pianoSheetSong);
+				Overlay::SetMode(Overlay::Mode::Playing);
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Real Play", ImVec2(130.0f * s, 0))) {
+				StartPianoSheetPractice(g_pianoSheetSong);
+			}
+			if (ImGui::IsItemHovered()) {
+				ImGui::SetTooltip("Play every note yourself at your own pace. The sheet does not scroll or time out; correct notes turn green.");
+			}
+			ImGui::EndDisabled();
+			if (!g_pianoSheetError.empty()) {
+				ImGui::SameLine(0.0f, 18.0f * s);
+				ImGui::TextColored(g_pianoSheetValid ? ImVec4(0.55f, 0.85f, 0.55f, 1.0f) : ImVec4(0.9f, 0.65f, 0.45f, 1.0f), "%s", g_pianoSheetError.c_str());
+			}
+			ImGui::Spacing();
+			if (ImGui::Button("Back to piano", ImVec2(160.0f * s, 0))) {
+				Overlay::SetMode(Overlay::Mode::Playing);
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Exit piano", ImVec2(130.0f * s, 0))) {
+				SendPianoExitEvent();
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("  Esc: back to piano · press Esc again to leave");
+			ImGui::End();
+		}
+
 		void DrawBook()
 		{
+			if (g_pianoMode) {
+				DrawPianoSheetBook();
+				return;
+			}
 			float sw = 0.0f, sh = 0.0f;
 			Overlay::ScreenSize(sw, sh);
 			const float s = g_ui;
@@ -2301,7 +3005,7 @@ namespace Performance
 			}
 			// how fine it is, and your name in this town
 			{
-				const int t = g_tierNow[g_inst == Instrument::Lute ? 0 : 1];
+				const int t = CurrentTier();
 				if (t >= 3) {
 					ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.45f, 1.0f), "You're playing %s", InstLabel(g_inst, t).c_str());
 					if (ImGui::IsItemHovered()) {
@@ -2596,6 +3300,95 @@ namespace Performance
 		SafeTick();
 	}
 
+	void OnPianoEvent(bool a_start)
+	{
+		std::lock_guard lk(g_mtx);
+		if (a_start) {
+			if (g_pianoMode) {
+				return;
+			}
+			if (g_playing) {
+				Stop("switching to piano");
+			}
+			auto* player = Player();
+			if (!player || !player->Is3DLoaded() || player->IsDead()) {
+				return;
+			}
+			if (!Audio::Start()) {
+				Hud("SkyrimSongs: no sound device found.");
+				return;
+			}
+			auto* pianoSynth = Audio::Synth();
+			if (!pianoSynth || !pianoSynth->PianoSoundFontLoaded()) {
+				Hud("Piano SoundFont missing. Install UprightPianoKW-small.sf2 and try again.");
+				spdlog::error("Piano SoundFont not loaded; expected Data\\SKSE\\Plugins\\SkyrimSongs\\Piano\\UprightPianoKW-small.sf2");
+				SendPianoExitEvent();
+				return;
+			}
+			Audio::SetVolume(Config::Get().volume);
+			Audio::SetReverb(Config::Get().reverb);
+			SetInst(Instrument::Piano);
+			g_pianoSheetNameEditing = false;
+			g_pianoSheetPractice = false;
+			g_pianoPracticeGroups.clear();
+			g_pianoCorrectLit.clear();
+			g_pianoMode = true;
+			g_animOn = false;
+			g_want = g_held = -1;
+			g_checkAt = -1.0;
+			g_checking = -1;
+			g_firstPersonAt = -1.0;
+			g_forcedThird = false;
+			g_lastNoteAt = Now();
+			MuteMusic(true);
+			g_midiCount = MidiIn::Open(&OnMidi);
+			g_midiNames = MidiIn::OpenNames();
+			g_playing = true;
+			g_act = Act::Free;
+			g_octave = 0;
+			g_shiftL = g_shiftR = false;
+			g_keyPitch.clear();
+			g_lit.clear();
+			{
+				std::lock_guard mk(g_midiMtx);
+				g_midiQ.clear();
+			}
+			g_free.Reset();
+			g_crowd = music::Crowd(static_cast<std::uint32_t>(g_rng()));
+			g_quality = 0.5;
+			{
+				auto* town = TownOf(player);
+				g_town = town ? town->GetFormID() : 0;
+				const char* name = town ? town->GetFullName() : nullptr;
+				g_townName = name && *name ? name : "these parts";
+			}
+			g_moodSum = g_heardFor = 0.0;
+			g_thrown = false;
+			g_college = CollegeStanding();
+			g_atCollege = AtTheCollege();
+			g_recognised = false;
+			CheckRank();
+			ApplyCrowdSettings();
+			g_names.clear();
+			g_feed.clear();
+			g_earned = 0;
+			g_badFor = 0.0;
+			g_warned = false;
+			g_cell = player->GetParentCell();
+			g_anchor = player->GetPosition();
+			g_anchorHeading = player->GetAngleZ();
+			++g_performances;
+			ScanListeners();
+			Say(fmt::format("You sit at the piano.{}", g_midiCount ? fmt::format(" (MIDI: {})", g_midiNames.empty() ? "connected" : g_midiNames.front()) : ""), kInk);
+			Overlay::SetMode(Overlay::Mode::Playing);
+			spdlog::info("Playing the piano: {} listening{}, MIDI devices {}, in {} ({:08X})", g_crowd.Size(), g_inInn ? " (an inn)" : "", g_midiCount,
+				g_townName, g_town);
+		} else if (g_pianoMode) {
+			spdlog::info("Piano event received: stop");
+			Stop("piano");
+		}
+	}
+
 	void OnHotkey(int a_scan)
 	{
 		if (a_scan == Config::Get().hotkey) {
@@ -2622,7 +3415,47 @@ namespace Performance
 			if (!a_down) {
 				return;
 			}
-			if (a_scan == 0x01 || a_scan == Config::Get().hotkey) {  // Esc or the hotkey closes the songbook
+			if (g_pianoMode) {
+				if (g_pianoSheetNameEditing) {
+					if (a_scan == 0x01 || a_scan == 0x1C || a_scan == 0x0F || a_scan == Config::Get().hotkey) {
+						g_pianoSheetNameEditing = false;  // Esc, Enter, Tab or hotkey finishes name editing
+						if (g_pianoSheetValid) g_pianoSheetSong.title = TrimSheetName(g_pianoSheetName);
+					} else if (a_scan == 0x0E) {
+						if (!g_pianoSheetName.empty()) g_pianoSheetName.pop_back();
+					} else if (a_scan == 0x39) {
+						if (g_pianoSheetName.size() < 64) g_pianoSheetName.push_back(' ');
+					} else if (const char c = CharOf(a_scan, g_shiftL || g_shiftR); c && g_pianoSheetName.size() < 64 &&
+						(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' || c == '(' || c == ')' || c == '\'')) {
+						g_pianoSheetName.push_back(c);
+					}
+					return;
+				}
+				if (a_scan == 0x01 || a_scan == 0x0F || a_scan == Config::Get().hotkey) {
+					Overlay::SetMode(Overlay::Mode::Playing);
+				} else if (a_scan == 0x0E) {  // Backspace
+					if (!g_pianoSheetText.empty()) g_pianoSheetText.pop_back();
+					g_pianoSheetChanged = true;
+					g_pianoSheetValid = false;
+					g_pianoSheetError = "Sheet changed. Parse it again before playing.";
+				} else if (a_scan == 0x1C) {  // Enter: paragraph/new line
+					if (g_pianoSheetText.size() < 8192) g_pianoSheetText.push_back('\n');
+					g_pianoSheetChanged = true;
+					g_pianoSheetValid = false;
+					g_pianoSheetError = "Sheet changed. Parse it again before playing.";
+				} else if (a_scan == 0x39) {  // Space in the sheet editor (not sustain)
+					if (g_pianoSheetText.size() < 8192) g_pianoSheetText.push_back(' ');
+					g_pianoSheetChanged = true;
+					g_pianoSheetValid = false;
+					g_pianoSheetError = "Sheet changed. Parse it again before playing.";
+				} else if (const char c = CharOf(a_scan, g_shiftL || g_shiftR); c >= 32 && c < 127 && g_pianoSheetText.size() < 8192) {
+					g_pianoSheetText.push_back(c);
+					g_pianoSheetChanged = true;
+					g_pianoSheetValid = false;
+					g_pianoSheetError = "Sheet changed. Parse it again before playing.";
+				}
+				return;
+			}
+			if (a_scan == 0x01 || a_scan == Config::Get().hotkey) {  // Esc or hotkey closes the songbook
 				Overlay::SetMode(Overlay::Mode::Playing);
 			} else if (a_scan == 0x0E) {  // Backspace: the search
 				if (!g_search.empty()) {
@@ -2632,6 +3465,25 @@ namespace Performance
 				g_search += c;
 			}
 			return;
+		}
+		if (g_pianoMode && a_scan == 0x39) {  // Space: sustain pedal only while playing, not in the sheet editor
+			if (auto* syn = Audio::Synth()) syn->Sustain(a_down);
+			return;
+		}
+		if (g_pianoMode && g_pianoSheetPractice && a_down) {
+			const std::size_t pages = (std::max)(std::size_t{1}, (g_pianoPracticeGroups.size() + kPianoPracticeGroupsPerPage - 1) / kPianoPracticeGroupsPerPage);
+			if (a_scan == 0xD1) {  // Page Down: manual sheet turn
+				if (g_pianoPracticePage + 1 < pages) ++g_pianoPracticePage;
+				return;
+			}
+			if (a_scan == 0xC9) {  // Page Up
+				if (g_pianoPracticePage > 0) --g_pianoPracticePage;
+				return;
+			}
+			if (a_scan == 0xC7) {  // Home: return to the first page
+				g_pianoPracticePage = 0;
+				return;
+			}
 		}
 		if (a_down && a_scan == 0x19 && g_act == Act::Auto) {  // P: pause the song, or carry on
 			const bool pause = !Audio::SongPaused();
@@ -2644,7 +3496,8 @@ namespace Performance
 		}
 		// a note key (while a song plays itself, the note keys rest)
 		if (a_down) {
-			const int pitch = g_act == Act::Auto ? -1 : music::keymap::Pitch(a_scan, Base(), g_shiftL || g_shiftR);
+			const int pitch = g_act == Act::Auto ? -1 :
+				(g_pianoMode ? music::keymap::PianoPitch(a_scan, g_shiftL || g_shiftR) : music::keymap::Pitch(a_scan, Base(), g_shiftL || g_shiftR));
 			if (pitch >= 0) {
 				if (auto it = g_keyPitch.find(a_scan); it != g_keyPitch.end()) {
 					Unsound(it->second);
@@ -2661,9 +3514,24 @@ namespace Performance
 			}
 			return;
 		}
-		// the rest (key down). While you play, every other key is swallowed: the hotkey or Esc gets you out.
+		// Escape exits piano mode. Papyrus restores movement and ends the FNIS/Nemesis pose.
+		if (g_pianoMode && a_down && (a_scan == 0x01 || a_scan == Config::Get().hotkey)) {
+			ReleaseAllKeys();
+			Hud("You leave the piano.");
+			SendPianoExitEvent();
+			return;
+		}
 		if (a_scan == Config::Get().hotkey) {
 			Stop("hotkey");
+			return;
+		}
+		if (g_pianoMode && a_down && a_scan == 0x0F) {  // Tab: open the sheet editor (stopping a live lesson first)
+			ReleaseAllKeys();
+			if (g_pianoSheetPractice) {
+				BackToFree();
+				Say("Real Play lesson stopped.", kDim);
+			}
+			Overlay::SetMode(Overlay::Mode::Book);
 			return;
 		}
 		switch (a_scan) {

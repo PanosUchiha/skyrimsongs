@@ -6,6 +6,7 @@
 // and whoever's in earshot listens. Tips, heckles, and in an inn, the door if you're bad enough.
 namespace Performance
 {
+	void OnPianoEvent(bool a_start);  // Papyrus piano activator start/stop event
 	void OnDataLoaded();
 	void OnGameLoaded();
 	void FrameTick();  // main thread, once a frame

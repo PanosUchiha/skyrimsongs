@@ -2,6 +2,11 @@
 // Copyright (C) 2026 evodube. GPL-3.0 (LICENSE.txt).
 #include "Synth.h"
 
+// TinySoundFont is a small, single-header SF2 playback engine. Keep its implementation in this
+// translation unit only; note events are queued and applied on the audio thread below.
+#define TSF_IMPLEMENTATION
+#include "third_party/tsf.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -28,6 +33,8 @@ namespace music
 			return a_table[i] + (a_table[i + 1] - a_table[i]) * (x - i);
 		}
 		constexpr int kLuteLow = 36, kFluteLow = 60;
+		constexpr int kPianoSoundFontChannel = 0;
+		constexpr const char* kPianoSoundFontPath = "Data\\SKSE\\Plugins\\SkyrimSongs\\Piano\\UprightPianoKW-small.sf2";
 	}
 
 	const char* InstrumentName(Instrument a_i)
@@ -37,6 +44,8 @@ namespace music
 			return "Lute";
 		case Instrument::Flute:
 			return "Flute";
+		case Instrument::Piano:
+			return "Piano";
 		default:
 			return "?";
 		}
@@ -57,6 +66,12 @@ namespace music
 		bandpass(m_body[0], 110.0f, 3.5f, 0.9f);
 		bandpass(m_body[1], 245.0f, 4.0f, 0.6f);
 		bandpass(m_body[2], 540.0f, 2.5f, 0.35f);
+		// A piano's strings drive a broad wooden soundboard. These quiet parallel modes add
+		// the low-mid warmth and upper-mid knock missing from a bank of bare oscillators.
+		bandpass(m_pianoBody[0], 118.0f, 1.4f, 0.42f);
+		bandpass(m_pianoBody[1], 238.0f, 1.8f, 0.30f);
+		bandpass(m_pianoBody[2], 510.0f, 2.2f, 0.19f);
+		bandpass(m_pianoBody[3], 1380.0f, 2.4f, 0.10f);
 		{
 			const double w = kTau * 5200.0 / m_rate, al = std::sin(w) / (2.0 * 0.707), a0 = 1.0 + al, c = std::cos(w);
 			m_tone.b0 = static_cast<float>((1.0 - c) / 2.0 / a0);
@@ -76,6 +91,26 @@ namespace music
 		}
 		m_queue.reserve(256);
 		m_work.reserve(256);
+
+		// The sampled Kawai upright is kept outside the source archive because the CC0 bank is a separate asset.
+		// If it is absent, the existing procedural piano remains as a diagnostic fallback.
+		m_pianoSf2 = tsf_load_filename(kPianoSoundFontPath);
+		if (m_pianoSf2) {
+			tsf_set_output(m_pianoSf2, TSF_MONO, static_cast<int>(m_rate), 5.0f);
+			tsf_set_max_voices(m_pianoSf2, 128);
+			if (!tsf_channel_set_presetindex(m_pianoSf2, kPianoSoundFontChannel, 0)) {
+				tsf_close(m_pianoSf2);
+				m_pianoSf2 = nullptr;
+			}
+		}
+	}
+
+	Synth::~Synth()
+	{
+		if (m_pianoSf2) {
+			tsf_close(m_pianoSf2);
+			m_pianoSf2 = nullptr;
+		}
 	}
 
 	// ------------------------------------------------------------------------------------------------ events
@@ -225,12 +260,91 @@ namespace music
 		a_v.norm = std::pow(10.0f, NormDb(kLuteNorm, a_pitch) / 20.0f);
 	}
 
+	void Synth::SetPianoDecay(Voice& a_v, float a_t60)
+	{
+		for (int k = 0; k < a_v.pianoStringCount; ++k) {
+			auto& s = a_v.pianoStrings[k];
+			if (s.len <= 0) {
+				continue;
+			}
+			const float f = m_rate / (s.len + s.damp + 0.5f);
+			s.gain = static_cast<float>(std::pow(10.0, -3.0 / (static_cast<double>(a_t60) * f)));
+		}
+	}
+
+	void Synth::StartPiano(Voice& a_v, int a_pitch, float a_vel)
+	{
+		a_v.inst = Instrument::Piano;
+		a_v.pitch = a_pitch;
+		a_v.vel = a_vel;
+		a_v.freq = PitchHz(a_pitch);
+		a_v.held = true;
+		a_v.age = 0.0;
+		a_v.released = false;
+		a_v.pianoRelease = 1.0f;
+		const float reg = std::clamp((a_pitch - 36) / 60.0f, 0.0f, 1.0f);
+		const float quality = static_cast<float>(m_quality[2].load());
+		const float velocity = std::pow(a_vel, 0.72f);
+		// Real pianos use one bass string, two through much of the lower middle, and three
+		// unison strings through the upper registers. Their tiny tuning differences create beating.
+		a_v.pianoStringCount = a_pitch < 45 ? 1 : a_pitch < 57 ? 2 : 3;
+		static constexpr float kDetuneCents[3] = { -0.82f, 0.0f, 0.82f };
+		const float stringAmp = a_v.pianoStringCount == 1 ? 1.25f : a_v.pianoStringCount == 2 ? 0.72f : 0.50f;
+		for (int k = 0; k < a_v.pianoStringCount; ++k) {
+			auto& s = a_v.pianoStrings[k];
+			const float cents = kDetuneCents[k] * (0.45f + 0.55f * reg);
+			const float f = a_v.freq * std::pow(2.0f, cents / 1200.0f);
+			s.damp = std::clamp(0.50f - 0.70f * (f - 250.0f) / 1800.0f, 0.08f, 0.52f);
+			const double delay = std::clamp(static_cast<double>(m_rate / f - s.damp), 2.2, static_cast<double>(kMaxDelay - 2));
+			s.len = static_cast<int>(delay - 0.1);
+			const double frac = delay - s.len;
+			s.apC = static_cast<float>((1.0 - frac) / (1.0 + frac));
+			s.apX = s.apY = s.prev = 0.0f;
+			s.idx = 0;
+			s.amp = stringAmp;
+			// A hammer compresses the string for only a few milliseconds. A bright, filtered
+			// noise burst gives the delay line a struck-string spectrum instead of a pure sine.
+			const float hammerFilter = std::clamp(0.20f + 0.47f * velocity * (0.75f + 0.35f * reg), 0.18f, 0.78f);
+			float       lp = 0.0f;
+			float       peak = 1e-6f;
+			for (int i = 0; i < s.len; ++i) {
+				lp += hammerFilter * (Noise() - lp);
+				s.buf[i] = lp;
+				peak = (std::max)(peak, std::abs(lp));
+			}
+			double mean = 0.0;
+			for (int i = 0; i < s.len; ++i) {
+				mean += s.buf[i];
+			}
+			mean /= s.len;
+			const float velocityGain = std::pow(a_vel, 0.55f);
+			for (int i = 0; i < s.len; ++i) {
+				s.buf[i] = (s.buf[i] - static_cast<float>(mean)) / peak * velocityGain;
+			}
+		}
+		// Bass notes ring longer; treble notes decay faster. Quality has a subtle sustain effect.
+		const float t60 = (3.25f + 4.25f * std::pow(1.0f - reg, 1.15f)) * (1.0f + 0.025f * quality);
+		SetPianoDecay(a_v, t60);
+		// Compensation is intentionally broad and modest: the low keys need presence, not a huge bass boost.
+		const float bassCompDb = 3.5f * (1.0f - reg) * (1.0f - reg);
+		const float trebleCompDb = 5.0f * reg;
+		a_v.norm = (1.10f + 0.10f * reg) * std::pow(10.0f, (bassCompDb + trebleCompDb) / 20.0f);
+		// Felt hammer noise is strongest on a hard strike and gets brighter toward the treble.
+		a_v.pianoHammer = (0.10f + 0.22f * velocity) * (0.85f + 0.25f * reg);
+		a_v.pianoHammerLow = 0.0f;
+	}
+
 	void Synth::Apply(const Event& e)
 	{
 		switch (e.kind) {
 		case Event::Kind::On:
-			if (e.inst == Instrument::Lute) {
-				// re-plucking a string that's still ringing stops it first
+			if (e.inst == Instrument::Piano) {
+				if (m_pianoSf2) {
+					tsf_channel_note_on(m_pianoSf2, kPianoSoundFontChannel, e.pitch, e.value);
+				}
+				break;
+			} else if (e.inst == Instrument::Lute) {
+				// Re-plucking a string that's still ringing stops it first.
 				for (auto& v : m_voices) {
 					if (v.on && !v.coin && v.inst == Instrument::Lute && v.pitch == e.pitch && v.live == e.live) {
 						v.released = true;
@@ -241,13 +355,13 @@ namespace music
 				auto* v = Allocate();
 				v->live = e.live;
 				StartLute(*v, e.pitch, e.value);
-			} else {
+			} else if (e.inst == Instrument::Flute) {
 				if (e.live) {
 					std::erase(m_fluteHeld, e.pitch);
 					m_fluteHeld.push_back(e.pitch);
 					for (auto& v : m_voices) {
 						if (v.on && !v.coin && v.inst == Instrument::Flute && v.live && !v.released) {
-							// slur to the new note: no new breath, a light tongue
+							// Live flute is monophonic: slur to the newest key with a light tongue.
 							v.pitch = e.pitch;
 							v.targetFreq = PitchHz(e.pitch);
 							v.vel = e.value;
@@ -268,9 +382,24 @@ namespace music
 				v->chiff = 0.5f * e.value * (1.0f - 0.5f * Register(e.pitch, kFluteLow));
 				v->norm = std::pow(10.0f, NormDb(kFluteNorm, e.pitch) / 20.0f);
 				v->phase = 0.0;
+			} else {
+				// Piano is polyphonic. A repeated key gently damps the earlier string before a new hammer strike.
+				for (auto& v : m_voices) {
+					if (v.on && !v.coin && v.inst == Instrument::Piano && v.pitch == e.pitch && v.live == e.live) {
+						v.released = true;
+						v.held = false;
+					}
+				}
+				auto* v = Allocate();
+				v->live = e.live;
+				StartPiano(*v, e.pitch, e.value);
 			}
 			break;
 		case Event::Kind::Off:
+			if (e.inst == Instrument::Piano && m_pianoSf2) {
+				tsf_channel_note_off(m_pianoSf2, kPianoSoundFontChannel, e.pitch);
+				break;
+			}
 			if (e.inst == Instrument::Flute && e.live) {
 				std::erase(m_fluteHeld, e.pitch);
 				for (auto& v : m_voices) {
@@ -301,6 +430,9 @@ namespace music
 			break;
 		case Event::Kind::Sustain:
 			m_sustain = e.value > 0.5f;
+			if (m_pianoSf2) {
+				tsf_channel_set_sustain(m_pianoSf2, kPianoSoundFontChannel, m_sustain ? 1 : 0);
+			}
 			if (!m_sustain) {
 				for (auto& v : m_voices) {
 					if (v.on && !v.coin && !v.held && !v.released) {
@@ -313,6 +445,9 @@ namespace music
 			}
 			break;
 		case Event::Kind::AllOff:
+			if (m_pianoSf2) {
+				tsf_channel_note_off_all(m_pianoSf2, kPianoSoundFontChannel);
+			}
 			m_fluteHeld.clear();
 			for (auto& v : m_voices) {
 				if (v.on && !v.coin && !v.released) {
@@ -325,6 +460,9 @@ namespace music
 			}
 			break;
 		case Event::Kind::Silence:
+			if (m_pianoSf2) {
+				tsf_channel_sounds_off_all(m_pianoSf2, kPianoSoundFontChannel);
+			}
 			m_fluteHeld.clear();
 			for (auto& v : m_voices) {
 				v.on = false;
@@ -433,6 +571,43 @@ namespace music
 		return out * 0.44f * v.norm;  // (0.44: level with the lute)
 	}
 
+	float Synth::PianoSample(Voice& v)
+	{
+		const double dt = 1.0 / m_rate;
+		v.age += dt;
+		if (v.released) {
+			// A piano damper is felt, not a hard gate: leave a short, audible natural tail.
+			const float releaseTau = 0.22f + 0.025f * static_cast<float>(m_quality[2].load());
+			v.pianoRelease *= std::exp(static_cast<float>(-dt / releaseTau));
+		}
+		float out = 0.0f;
+		for (int k = 0; k < v.pianoStringCount; ++k) {
+			auto& s = v.pianoStrings[k];
+			const float y = s.buf[s.idx];
+			const float lp = (1.0f - s.damp) * y + s.damp * s.prev;
+			s.prev = y;
+			const float ap = s.apC * lp + s.apX - s.apC * s.apY;
+			s.apX = lp;
+			s.apY = ap;
+			s.buf[s.idx] = ap * s.gain;
+			if (++s.idx >= s.len) {
+				s.idx = 0;
+			}
+			out += y * s.amp;
+		}
+		// A tiny high-passed hammer/felt click supplies the sharp initial attack, then disappears quickly.
+		if (v.pianoHammer > 1e-4f) {
+			const float n = Noise();
+			v.pianoHammerLow += 0.24f * (n - v.pianoHammerLow);
+			const float hammerEnv = std::exp(static_cast<float>(-v.age / 0.0038));
+			out += (n - v.pianoHammerLow) * v.pianoHammer * hammerEnv;
+			v.pianoHammer *= 0.9994f;
+		}
+		// Raised from the old 0.23 gain: it was buried after the shared master attenuation.
+		// The master limiter still catches dense chords, while a single note now has proper presence.
+		return out * v.pianoRelease * v.norm * 1.35f;
+	}
+
 	float Synth::CoinSample(Voice& v)
 	{
 		static constexpr float kF[6] = { 2350.0f, 3810.0f, 5530.0f, 7210.0f, 2520.0f, 4100.0f };
@@ -492,8 +667,13 @@ namespace music
 		m_work.clear();
 
 		const double dt = 1.0 / m_rate;
+		if (m_pianoSf2 && a_frames > 0 && a_frames <= static_cast<int>(m_pianoScratch.size())) {
+			tsf_render_float(m_pianoSf2, m_pianoScratch.data(), a_frames, 0);
+		} else {
+			std::fill(m_pianoScratch.begin(), m_pianoScratch.end(), 0.0f);
+		}
 		for (int i = 0; i < a_frames; ++i) {
-			float lute = 0.0f, flute = 0.0f, coin = 0.0f;
+			float lute = 0.0f, flute = 0.0f, piano = (m_pianoSf2 && a_frames <= static_cast<int>(m_pianoScratch.size())) ? m_pianoScratch[static_cast<std::size_t>(i)] : 0.0f, coin = 0.0f;
 			for (auto& v : m_voices) {
 				if (!v.on) {
 					continue;
@@ -507,9 +687,12 @@ namespace music
 					v.age += dt;
 					s = LuteSample(v) * v.norm;
 					lute += s;
-				} else {
+				} else if (v.inst == Instrument::Flute) {
 					s = FluteSample(v);
 					flute += s;
+				} else {
+					s = PianoSample(v);
+					piano += s;
 				}
 				v.level = v.level * 0.999f + std::abs(s) * 0.001f;
 				if (v.age > 0.15 && v.level < 2e-5f && (v.released || v.inst == Instrument::Lute)) {
@@ -530,7 +713,13 @@ namespace music
 			const float fhp = 0.979f * (m_fluteHpY + flute - m_fluteHpX);
 			m_fluteHpX = flute;
 			m_fluteHpY = fhp;
-			const float dry = body + fhp * 0.8f + coin;
+			float pianoBody = piano;
+			if (!m_pianoSf2) {
+				for (auto& b : m_pianoBody) {
+					pianoBody += b.Run(piano);
+				}
+			}
+			const float dry = body + fhp * 0.8f + pianoBody + coin;
 			const float wet = Reverb(dry) * m_wet;
 			// a limiter (instant attack, 120 ms release) keeps loud chords under the soft-clip, which on its own
 			// crackled on dense passages; the tanh is only a last safety
@@ -543,6 +732,9 @@ namespace music
 		int n = 0;
 		for (const auto& v : m_voices) {
 			n += v.on ? 1 : 0;
+		}
+		if (m_pianoSf2) {
+			n += tsf_active_voice_count(m_pianoSf2);
 		}
 		m_active = n;
 	}

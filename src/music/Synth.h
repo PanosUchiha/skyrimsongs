@@ -17,13 +17,20 @@
 //    resonating faintly at the first harmonics (no broadband hiss), a player's slight unsteadiness in pitch and
 //    loudness, a chiff of air at the start, a scoop up into the note and a vibrato that blooms if you hold it.
 //    Low register breathy, top pure; below C4 a big soft low flute. Played live it's monophonic and slurs.
-//  Every key's loudness is evened out (measured, see kLuteNorm / kFluteNorm).
+//  - Piano: polyphonic sampled acoustic piano from the CC0 Kawai Upright Piano KW SoundFont. TinySoundFont handles
+//    sample interpolation, velocity layers, envelopes, note release and sustain. The bank is loaded from
+//    Data\SKSE\Plugins\SkyrimSongs\Piano\UprightPianoKW-small.sf2 at startup.
+//  Lute and flute use measured per-key loudness voicing (kLuteNorm / kFluteNorm); the sampled piano keeps its bank's
+//    recorded register balance and velocity response.
+struct tsf;
+
 namespace music
 {
 	enum class Instrument : std::uint8_t
 	{
 		Lute,
 		Flute,
+		Piano,
 		kCount
 	};
 	const char* InstrumentName(Instrument a_i);
@@ -32,6 +39,7 @@ namespace music
 	{
 	public:
 		explicit Synth(float a_rate = 48000.0f);
+		~Synth();
 
 		// Thread-safe: called from the game's input, the MIDI keyboard's thread and the song player; the events are
 		// applied at the start of the next block Render makes.
@@ -44,13 +52,14 @@ namespace music
 		void SetVolume(float a_v);
 		void SetReverb(float a_wet);
 		// How fine the instrument is: 0 a common one, 1 fine, 2 masterwork, 3 a legend (Finn's own lute, Pantea's flute).
-		// A better lute rings longer through a fuller body; a better flute speaks cleaner, steadier, with a sweeter vibrato.
-		void SetQuality(Instrument a_inst, int a_tier) { m_quality[a_inst == Instrument::Lute ? 0 : 1] = a_tier < 0 ? 0 : a_tier > 3 ? 3 : a_tier; }
+		// A better lute rings longer through a fuller body; a better flute speaks cleaner; piano quality adds sustain.
+		void SetQuality(Instrument a_inst, int a_tier) { m_quality[static_cast<int>(a_inst)] = a_tier < 0 ? 0 : a_tier > 3 ? 3 : a_tier; }
 
 		// Mono, overwrites a_out. Call from one thread only (the audio thread).
 		void Render(float* a_out, int a_frames);
 		int  ActiveVoices() const { return m_active; }
 		float Rate() const { return m_rate; }
+		bool PianoSoundFontLoaded() const { return m_pianoSf2 != nullptr; }
 
 	private:
 		static constexpr int kVoices = 40;
@@ -100,6 +109,12 @@ namespace music
 			float  bpLow = 0.0f, bpBand = 0.0f;  // the breath noise's band-pass
 			float  rz[3][2]{};                   // breath resonating at the first three harmonics (band-passes)
 			float  jitP = 0.0f, jitA = 0.0f;     // a player's unsteadiness: slow wander in pitch and loudness
+			// piano: one, two or three struck strings, slightly detuned as on an acoustic piano
+			String pianoStrings[3];
+			int   pianoStringCount = 0;
+			float pianoRelease = 1.0f;
+			float pianoHammer = 0.0f;
+			float pianoHammerLow = 0.0f;
 			// coin
 			float  coinVol = 0.0f;
 			double phases[6]{};
@@ -108,9 +123,12 @@ namespace music
 		void   Apply(const Event& a_e);
 		Voice* Allocate();
 		void   StartLute(Voice& a_v, int a_pitch, float a_vel);
+		void   StartPiano(Voice& a_v, int a_pitch, float a_vel);
+		void   SetPianoDecay(Voice& a_v, float a_t60);
 		void   SetLuteDecay(Voice& a_v, float a_t60);
 		float  LuteSample(Voice& a_v);
 		float  FluteSample(Voice& a_v);
+		float  PianoSample(Voice& a_v);
 		float  CoinSample(Voice& a_v);
 		float  Noise();
 		float  Reverb(float a_in);
@@ -125,8 +143,12 @@ namespace music
 		float               m_volume = 0.8f;
 		float               m_wet = 0.16f;
 		int                 m_active = 0;
-		std::atomic<int>    m_quality[2]{ 0, 0 };
+		std::atomic<int>    m_quality[3]{ 0, 0, 0 };
 		std::vector<int>    m_fluteHeld;  // live flute keys down, oldest first (the newest sounds)
+
+		// A recorded acoustic piano SoundFont, rendered on the audio thread alongside the procedural instruments.
+		struct tsf*         m_pianoSf2 = nullptr;
+		std::array<float, 2048> m_pianoScratch{};
 
 		// the lute's body: three band-pass resonances and a DC block
 		struct Biquad
@@ -141,6 +163,7 @@ namespace music
 			}
 		};
 		Biquad m_body[3];
+		Biquad m_pianoBody[4];  // soundboard resonances: warmth and presence behind the strings
 		Biquad m_tone;  // a gentle low-pass on the lute
 		float  m_dcX = 0.0f, m_dcY = 0.0f;
 		float  m_fluteHpX = 0.0f, m_fluteHpY = 0.0f;  // a high-pass on the flute: no boom under it

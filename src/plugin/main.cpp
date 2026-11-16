@@ -18,6 +18,8 @@
 #include "Overlay.h"
 #include "Performance.h"
 
+#include "SKSE/API.h"
+
 // One DLL for every version: CommonLibSSE-NG built for SE and AE, every game address taken from Address Library by
 // ID, and the plugin declared version-independent (add_commonlibsse_plugin ... USE_ADDRESS_LIBRARY), so it loads on
 // 1.5.97, every 1.6 release (1.6.1170 included) and later ones Address Library covers, Steam and GOG.
@@ -121,10 +123,44 @@ namespace
 		}
 	}
 
+	class PianoEventSink final : public RE::BSTEventSink<SKSE::ModCallbackEvent>
+	{
+	public:
+		RE::BSEventNotifyControl ProcessEvent(
+			const SKSE::ModCallbackEvent* a_event,
+			RE::BSTEventSource<SKSE::ModCallbackEvent>*) override
+		{
+			if (!a_event) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
+
+			const std::string_view eventName = a_event->eventName.c_str();
+			if (eventName == "SkyrimSongs_PianoStart") {
+				Performance::OnPianoEvent(true);
+			} else if (eventName == "SkyrimSongs_PianoStop") {
+				Performance::OnPianoEvent(false);
+			}
+
+			return RE::BSEventNotifyControl::kContinue;
+		}
+	};
+
+	PianoEventSink g_pianoEventSink;
+	bool g_pianoEventSinkRegistered = false;
+
 	void OnMessage(SKSE::MessagingInterface::Message* a_msg)
 	{
 		switch (a_msg->type) {
 		case SKSE::MessagingInterface::kPostLoad:
+			if (!g_pianoEventSinkRegistered) {
+				if (auto* source = SKSE::GetModCallbackEventSource()) {
+					source->AddEventSink(&g_pianoEventSink);
+					g_pianoEventSinkRegistered = true;
+					spdlog::info("Piano ModEvent listener registered");
+				} else {
+					spdlog::error("Could not register piano ModEvent listener");
+				}
+			}
 			Menu::Register();
 			break;
 		case SKSE::MessagingInterface::kDataLoaded:

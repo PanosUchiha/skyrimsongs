@@ -20,6 +20,7 @@ namespace InstrumentHud
 	{
 		int   pitch;
 		float age;  // seconds since it was struck
+		bool  correct = false;  // Real Play: this note matched the sheet
 	};
 
 	struct Fonts
@@ -34,4 +35,6 @@ namespace InstrumentHud
 		const Fonts& a_fonts);
 	void DrawFlute(ImDrawList* a_dl, ImVec2 a_pos, ImVec2 a_size, float a_scale, int a_base, const std::vector<Sounding>& a_notes, double a_now,
 		const Fonts& a_fonts);
+	// A full 61-key piano: C2-C7, with the Virtual Piano computer-key labels.
+	void DrawPiano(ImDrawList* a_dl, ImVec2 a_pos, ImVec2 a_size, float a_scale, const std::vector<Sounding>& a_notes, const Fonts& a_fonts);
 }

@@ -346,7 +346,9 @@ namespace music
 	// ------------------------------------------------------------------------------------------------ ChartJudge
 	void ChartJudge::Load(std::vector<music::Note> a_chart)
 	{
-		std::sort(a_chart.begin(), a_chart.end(), [](const music::Note& a, const music::Note& b) { return a.start < b.start; });
+		std::sort(a_chart.begin(), a_chart.end(), [](const music::Note& a, const music::Note& b) {
+			return a.start < b.start || (a.start == b.start && a.pitch < b.pitch);
+		});
 		m_chart = std::move(a_chart);
 		m_state.assign(m_chart.size(), State::Waiting);
 		m_next = 0;

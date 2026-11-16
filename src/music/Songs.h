@@ -26,6 +26,10 @@ namespace music
 	// its length in beats. "|" bar lines are ignored. false if a token can't be read.
 	bool ParseNotation(const std::string& a_text, double a_bpm, std::vector<Note>& a_out, std::string* a_error = nullptr);
 
+	// Virtual Piano letter sheets: [asdf] is a chord, adjacent keys are played quickly, separated keys have
+	// more space, | adds a pause, and a blank line adds a longer phrase break. Timing is estimated from the chosen BPM.
+	bool ParseVirtualPianoSheet(const std::string& a_text, const std::string& a_title, double a_bpm, Song& a_out, std::string* a_error = nullptr);
+
 	// A song from a MIDI file's bytes
 	bool SongFromMidi(const std::vector<std::uint8_t>& a_data, const std::string& a_title, Song& a_out, std::string* a_error = nullptr);
 
